@@ -84,7 +84,7 @@ function RotaPage() {
   }, [planWeek.inPlan, planWeek.weekly, planWeek.daily.join(",")]);
 
   const handleGenerate = () => {
-    const r = generateRota(weekISO, employees, dailyBudget);
+    const r = generateRota(weekISO, employees, dailyBudget, weeklyBudget);
     setRota(r);
   };
 
@@ -92,11 +92,22 @@ function RotaPage() {
   const totalHours = rota?.rows.reduce((s, r) => s + r.totalHours, 0) ?? 0;
   const remaining = weeklyBudget - totalCost;
   const overBudget = totalCost > weeklyBudget;
+  const weeklyPct = weeklyBudget > 0 ? (totalCost / weeklyBudget) * 100 : 0;
 
   const issues = useMemo(
     () => (rota ? checkCoverage(rota, employees, dailyBudget) : []),
     [rota, employees, dailyBudget],
   );
+
+  const rebalance = useMemo(
+    () => (rota ? suggestRebalance(rota, employees, dailyBudget, weeklyBudget) : null),
+    [rota, employees, dailyBudget, weeklyBudget],
+  );
+
+  const applyTrim = () => {
+    if (!rota || !rebalance?.trim) return;
+    writeShift(rebalance.trim.employeeId, rebalance.trim.dayIdx, null, null);
+  };
 
   const swap = useMemo(() => {
     if (!rota || !swapEmp || swapDay === "") return null;
