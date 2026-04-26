@@ -233,7 +233,82 @@ function RotaPage() {
         <Kpi label="Labour Hours" value={totalHours.toFixed(1)} />
       </div>
 
-      {/* Main split */}
+      {/* Live Budget Bar */}
+      {rota && (
+        <div className="bg-panel border border-border rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Live Budget Tracker
+            </h2>
+            <span
+              className={cn(
+                "text-xs font-semibold tabular px-2 py-0.5 rounded border",
+                overBudget
+                  ? "bg-destructive/10 text-destructive border-destructive/30"
+                  : weeklyPct > 90
+                    ? "bg-warning/10 text-warning border-warning/30"
+                    : "bg-success/10 text-success border-success/30",
+              )}
+            >
+              {weeklyPct.toFixed(1)}% of weekly
+            </span>
+          </div>
+          {/* Weekly progress bar */}
+          <div className="mb-2 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>Weekly £{totalCost.toFixed(0)} / £{weeklyBudget.toLocaleString()}</span>
+            <span className={cn("tabular font-medium", overBudget ? "text-destructive" : "text-success")}>
+              {overBudget ? `+£${Math.abs(remaining).toFixed(0)} over` : `£${remaining.toFixed(0)} left`}
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-surface overflow-hidden border border-border">
+            <div
+              className={cn(
+                "h-full transition-all",
+                overBudget ? "bg-destructive" : weeklyPct > 90 ? "bg-warning" : "bg-success",
+              )}
+              style={{ width: `${Math.min(100, weeklyPct)}%` }}
+            />
+          </div>
+          {/* Daily mini bars */}
+          <div className="grid grid-cols-7 gap-2 mt-4">
+            {DAYS.map((d, i) => {
+              const cost = rota.dailyCost[i];
+              const budget = dailyBudget[i] || 0;
+              const pct = budget > 0 ? (cost / budget) * 100 : 0;
+              const dayOver = cost > budget && budget > 0;
+              return (
+                <div key={d} className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground font-medium">{d}</span>
+                    <span
+                      className={cn(
+                        "tabular font-semibold",
+                        dayOver ? "text-destructive" : "text-muted-foreground",
+                      )}
+                    >
+                      {budget > 0 ? `${pct.toFixed(0)}%` : "—"}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-surface overflow-hidden border border-border">
+                    <div
+                      className={cn(
+                        "h-full",
+                        dayOver ? "bg-destructive" : pct > 90 ? "bg-warning" : "bg-success",
+                      )}
+                      style={{ width: `${Math.min(100, pct)}%` }}
+                    />
+                  </div>
+                  <div className="text-[9px] text-muted-foreground tabular text-center">
+                    £{cost.toFixed(0)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+
       <div className="flex flex-col xl:flex-row gap-6">
         {/* Rota table */}
         <div className="flex-1 min-w-0 bg-panel border border-border rounded-xl overflow-hidden">
