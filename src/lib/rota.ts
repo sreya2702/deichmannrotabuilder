@@ -112,10 +112,62 @@ interface AssignState {
   hoursAssigned: Record<string, number>;
 }
 
+/**
+ * Trim hours from the rota to fit within the weekly budget.
+ * Strategy: while over budget, find the most expensive *non-essential* shift
+ * (Part time first, then Full time, never Manager/Supervisor in their core
+ * single-coverage slots) and remove it. Stops when within budget or no
+ * further trims possible without breaking coverage.
+ */
+function trimToBudget(
+  rows: RotaRow[],
+  employees: Employee[],
+  weeklyBudget: number,
+): { rows: RotaRow[]; trimmed: number } {
+  const empMap = new Map(employees.map((e) => [e.id, e]));
+  const cost = () =>
+    rows.reduce((s, r) => {
+      const rate = empMap.get(r.employeeId)!.hourlyRate;
+      return s + r.days.reduce((a, d) => a + (d.shift?.hours ?? 0) * rate, 0);
+    }, 0);
+
+  let trimmed = 0;
+  let guard = 200;
+  while (cost() > weeklyBudget && guard-- > 0) {
+    // Build candidate list of removable shifts (PT > FT, never Mgr/Sup, never single-coverage of a section)
+    type Cand = { rowIdx: number; dayIdx: number; rate: number; hours: number; role: Employee["role"] };
+    const cands: Cand[] = [];
+    rows.forEach((r, ri) => {
+      const emp = empMap.get(r.employeeId)!;
+      if (emp.role === "Manager" || emp.role === "Supervisor") return;
+      r.days.forEach((d, di) => {
+        if (!d.shift || !d.section) return;
+        // Don't strip a section that this employee is the only one covering on that day
+        const sameSection = rows.filter(
+          (rr) => rr.days[di].section === d.section && rr.days[di].shift,
+        ).length;
+        if (sameSection <= 1) return;
+        cands.push({ rowIdx: ri, dayIdx: di, rate: emp.hourlyRate, hours: d.shift.hours, role: emp.role });
+      });
+    });
+    if (cands.length === 0) break;
+    // Prefer Part time, then highest cost-per-shift
+    cands.sort((a, b) => {
+      if (a.role !== b.role) return a.role === "Part time" ? -1 : 1;
+      return b.rate * b.hours - a.rate * a.hours;
+    });
+    const c = cands[0];
+    rows[c.rowIdx].days[c.dayIdx] = { shift: null, section: null };
+    trimmed++;
+  }
+  return { rows, trimmed };
+}
+
 export function generateRota(
   weekStartISO: string,
   employees: Employee[],
   dailyBudget: number[],
+  weeklyBudget?: number,
 ): Rota {
   const rows: RotaRow[] = employees.map((e) => ({
     employeeId: e.id,
