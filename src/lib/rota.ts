@@ -1,17 +1,56 @@
 import type { Employee, Rota, RotaRow, Section, Shift } from "./types";
 
 // Shift templates derived from the real Deichmann rota example
-const SHIFTS = {
-  early:    { start: "06:15", end: "15:15", hours: 8 },     // supervisor early/stock
-  open:     { start: "07:00", end: "16:00", hours: 8 },     // weekday opener
-  midOpen:  { start: "09:00", end: "17:30", hours: 8 },     // standard
-  mid:      { start: "10:00", end: "19:00", hours: 8 },     // standard mid
-  midClose: { start: "12:30", end: "21:30", hours: 8 },     // close
-  close:    { start: "15:00", end: "21:30", hours: 6 },     // late close
-  short:    { start: "11:00", end: "17:00", hours: 6 },     // PT short
-  sunOpen:  { start: "10:00", end: "18:00", hours: 7.5 },   // Sunday
-  sunClose: { start: "12:00", end: "19:00", hours: 6.5 },   // Sunday late
-} as const satisfies Record<string, Shift>;
+export const SHIFT_PRESETS: Record<string, Shift> = {
+  early:    { start: "06:15", end: "15:15", hours: 8 },
+  open:     { start: "07:00", end: "16:00", hours: 8 },
+  midOpen:  { start: "09:00", end: "17:30", hours: 8 },
+  mid:      { start: "10:00", end: "19:00", hours: 8 },
+  midClose: { start: "12:30", end: "21:30", hours: 8 },
+  close:    { start: "15:00", end: "21:30", hours: 6 },
+  short:    { start: "11:00", end: "17:00", hours: 6 },
+  sunOpen:  { start: "10:00", end: "18:00", hours: 7.5 },
+  sunClose: { start: "12:00", end: "19:00", hours: 6.5 },
+};
+const SHIFTS = SHIFT_PRESETS;
+
+export const PRESET_LABELS: Record<string, string> = {
+  early:    "Early (06:15–15:15)",
+  open:     "Open (07:00–16:00)",
+  midOpen:  "Mid-Open (09:00–17:30)",
+  mid:      "Mid (10:00–19:00)",
+  midClose: "Close (12:30–21:30)",
+  close:    "Late (15:00–21:30)",
+  short:    "Short (11:00–17:00)",
+  sunOpen:  "Sun Open (10:00–18:00)",
+  sunClose: "Sun Close (12:00–19:00)",
+};
+
+/** Compute hours between two HH:mm strings (handles same-day only). */
+export function hoursBetween(start: string, end: string): number {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  const mins = eh * 60 + em - (sh * 60 + sm);
+  return Math.max(0, Math.round((mins / 60) * 4) / 4); // round to 0.25h
+}
+
+/** Recalculate totals + dailyCost on a Rota in place-style (returns new). */
+export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
+  const dailyCost = Array(7).fill(0);
+  const rows = rota.rows.map((r) => {
+    const emp = employees.find((e) => e.id === r.employeeId)!;
+    let total = 0;
+    r.days.forEach((d, i) => {
+      if (d.shift) {
+        total += d.shift.hours;
+        dailyCost[i] += d.shift.hours * emp.hourlyRate;
+      }
+    });
+    return { ...r, totalHours: total, cost: total * emp.hourlyRate };
+  });
+  return { ...rota, rows, dailyCost };
+}
+
 
 export function fmtShift(s: Shift): string {
   const a = s.start.replace(":", "");
