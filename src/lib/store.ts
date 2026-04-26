@@ -118,7 +118,7 @@ let _rota: Rota | null = null;
 function ensure() {
   if (_employees === null) _employees = load("rota.employees.v2", SEED_EMPLOYEES);
   if (_budget === null) _budget = load("rota.budget", DEFAULT_BUDGET);
-  if (_rota === null) _rota = load<Rota | null>("rota.current", null);
+  if (_rota === null) _rota = load<Rota | null>("rota.current.v2", null);
 }
 
 export function getEmployees(): Employee[] {
@@ -145,7 +145,7 @@ export function getRota(): Rota | null {
 }
 export function setRota(next: Rota | null) {
   _rota = next;
-  save("rota.current", next);
+  save("rota.current.v2", next);
   emit();
 }
 
