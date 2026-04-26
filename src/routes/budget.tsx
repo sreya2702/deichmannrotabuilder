@@ -25,7 +25,9 @@ function BudgetPage() {
         </div>
         <div>
           <h1 className="text-xl font-semibold">Yearly Budget</h1>
-          <p className="text-sm text-muted-foreground">Set yearly, weekly and per-day labour budgets in GBP.</p>
+          <p className="text-sm text-muted-foreground">
+            26-week sales plan auto-loads when you pick a week on the rota. You can still override values here.
+          </p>
         </div>
       </header>
 

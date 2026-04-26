@@ -1,13 +1,17 @@
-import type { Employee, Rota, RotaRow, Shift } from "./types";
+import type { Employee, Rota, RotaRow, Section, Shift } from "./types";
 
-const SHIFT_TEMPLATES: Shift[] = [
-  { start: "07:00", end: "16:00", hours: 9 },
-  { start: "09:00", end: "17:30", hours: 8.5 },
-  { start: "10:00", end: "18:00", hours: 8 },
-  { start: "12:30", end: "21:30", hours: 9 },
-  { start: "16:00", end: "21:30", hours: 5.5 },
-];
-const SHORT_SHIFT: Shift = { start: "10:00", end: "16:00", hours: 6 };
+// Shift templates derived from the real Deichmann rota example
+const SHIFTS = {
+  early:    { start: "06:15", end: "15:15", hours: 8 },     // supervisor early/stock
+  open:     { start: "07:00", end: "16:00", hours: 8 },     // weekday opener
+  midOpen:  { start: "09:00", end: "17:30", hours: 8 },     // standard
+  mid:      { start: "10:00", end: "19:00", hours: 8 },     // standard mid
+  midClose: { start: "12:30", end: "21:30", hours: 8 },     // close
+  close:    { start: "15:00", end: "21:30", hours: 6 },     // late close
+  short:    { start: "11:00", end: "17:00", hours: 6 },     // PT short
+  sunOpen:  { start: "10:00", end: "18:00", hours: 7.5 },   // Sunday
+  sunClose: { start: "12:00", end: "19:00", hours: 6.5 },   // Sunday late
+} as const satisfies Record<string, Shift>;
 
 export function fmtShift(s: Shift): string {
   const a = s.start.replace(":", "");
@@ -15,97 +19,128 @@ export function fmtShift(s: Shift): string {
   return `${a}-${b}`;
 }
 
-interface Requirement {
-  managers: number; // min managers
-  supervisors: number;
-  general: number; // min general staff
+// Per-role weekly hour targets
+function targetHours(role: Employee["role"]): { min: number; max: number } {
+  switch (role) {
+    case "Manager":    return { min: 40, max: 40 };
+    case "Supervisor": return { min: 40, max: 40 };
+    case "Full time":  return { min: 25, max: 30 };
+    case "Part time":  return { min: 8,  max: 16 };
+  }
 }
 
-function dailyRequirement(dayIdx: number): Requirement {
-  // Sun has no Manager required
+// Required sections per day. Sunday: no Manager. Rush adds extra Tills (morning).
+function requiredSections(dayIdx: number, isRush: boolean): Section[] {
   const isSun = dayIdx === 6;
-  const isWeekend = dayIdx >= 5;
-  return {
-    managers: isSun ? 0 : 1,
-    supervisors: 1,
-    general: isWeekend ? 4 : 3,
-  };
+  const base: Section[] = isSun
+    ? ["Supervisor", "Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills"]
+    : ["Manager", "Supervisor", "Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills"];
+  if (isRush) base.push("Tills"); // extra till in rush
+  return base;
 }
 
-interface WorkState {
+// Pick a shift based on section + day + employee role
+function shiftFor(section: Section, dayIdx: number, role: Employee["role"], slotIdx: number): Shift {
+  const isSun = dayIdx === 6;
+  if (isSun) return slotIdx % 2 === 0 ? SHIFTS.sunOpen : SHIFTS.sunClose;
+
+  if (section === "Manager") return slotIdx % 2 === 0 ? SHIFTS.open : SHIFTS.midClose;
+  if (section === "Supervisor") {
+    // Supervisor handles close, can also do early
+    return slotIdx % 2 === 0 ? SHIFTS.early : SHIFTS.midClose;
+  }
+  if (section === "Tills") {
+    // Tills extra in rush = morning
+    return slotIdx === 0 ? SHIFTS.midOpen : SHIFTS.open;
+  }
+  // Floor sections
+  if (role === "Part time") return slotIdx % 2 === 0 ? SHIFTS.short : SHIFTS.close;
+  if (slotIdx % 3 === 0) return SHIFTS.midOpen;
+  if (slotIdx % 3 === 1) return SHIFTS.mid;
+  return SHIFTS.midClose;
+}
+
+// Determine rush days from this week's daily budgets. A day is rush if its
+// budget is >= average + 15%, OR it's a weekend (Sat=5, Sun=6).
+function detectRush(dailyBudget: number[]): boolean[] {
+  const valid = dailyBudget.filter((v) => v > 0);
+  const avg = valid.length ? valid.reduce((s, n) => s + n, 0) / valid.length : 0;
+  const threshold = avg * 1.15;
+  return dailyBudget.map((v, i) => i >= 5 || v >= threshold);
+}
+
+interface AssignState {
   hoursAssigned: Record<string, number>;
 }
 
-function pickShift(dayIdx: number, employee: Employee, slot: "open" | "close" | "mid"): Shift {
-  // Map: managers/supervisors prefer mid/open, evening => close
-  if (slot === "open") return SHIFT_TEMPLATES[1]; // 09:00-17:30
-  if (slot === "close") return SHIFT_TEMPLATES[3]; // 12:30-21:30
-  if (employee.contractedHours <= 20) return SHORT_SHIFT;
-  return SHIFT_TEMPLATES[2]; // 10:00-18:00
-}
-
-export function generateRota(weekStartISO: string, employees: Employee[]): Rota {
+export function generateRota(
+  weekStartISO: string,
+  employees: Employee[],
+  dailyBudget: number[],
+): Rota {
   const rows: RotaRow[] = employees.map((e) => ({
     employeeId: e.id,
-    days: Array.from({ length: 7 }, () => ({ shift: null })),
+    days: Array.from({ length: 7 }, () => ({ shift: null, section: null })),
     totalHours: 0,
     cost: 0,
   }));
-  const state: WorkState = { hoursAssigned: {} };
+  const rowIdx = new Map(employees.map((e, i) => [e.id, i]));
+  const state: AssignState = { hoursAssigned: {} };
   employees.forEach((e) => (state.hoursAssigned[e.id] = 0));
 
-  // helper to assign
-  const assign = (empIdx: number, dayIdx: number, shift: Shift) => {
-    rows[empIdx].days[dayIdx] = { shift };
-    state.hoursAssigned[employees[empIdx].id] += shift.hours;
+  const rush = detectRush(dailyBudget);
+
+  const assign = (empId: string, dayIdx: number, shift: Shift, section: Section) => {
+    const i = rowIdx.get(empId)!;
+    rows[i].days[dayIdx] = { shift, section };
+    state.hoursAssigned[empId] += shift.hours;
   };
 
-  // For each day, fill required roles using cheapest-first that still has available contracted hours left.
-  for (let d = 0; d < 7; d++) {
-    const req = dailyRequirement(d);
+  // Eligibility: matches role pool for a section
+  const poolFor = (section: Section): Employee["role"][] => {
+    if (section === "Manager") return ["Manager"];
+    if (section === "Supervisor") return ["Supervisor"];
+    if (section === "Tills") return ["Part time", "Full time"];
+    return ["Full time", "Part time"]; // floor sections
+  };
 
-    const candidates = (predicate: (e: Employee) => boolean) =>
-      employees
-        .map((e, i) => ({ e, i }))
-        .filter(({ e, i }) => predicate(e) && e.availability[d] && rows[i].days[d].shift === null)
+  for (let d = 0; d < 7; d++) {
+    const sections = requiredSections(d, rush[d]);
+    let slotIdx = 0;
+
+    for (const section of sections) {
+      const allowedRoles = poolFor(section);
+      const candidates = employees
+        .filter((e) => allowedRoles.includes(e.role))
+        .filter((e) => e.availability[d])
+        .filter((e) => rows[rowIdx.get(e.id)!].days[d].shift === null) // not yet assigned today
         .sort((a, b) => {
-          // prefer those with remaining contracted hours; then cheapest
-          const remA = a.e.contractedHours - state.hoursAssigned[a.e.id];
-          const remB = b.e.contractedHours - state.hoursAssigned[b.e.id];
-          if ((remA > 0) !== (remB > 0)) return remA > 0 ? -1 : 1;
-          return a.e.hourlyRate - b.e.hourlyRate;
+          // 1) under their max → preferred
+          const maxA = targetHours(a.role).max;
+          const maxB = targetHours(b.role).max;
+          const remA = maxA - state.hoursAssigned[a.id];
+          const remB = maxB - state.hoursAssigned[b.id];
+          const aUnder = remA > 0;
+          const bUnder = remB > 0;
+          if (aUnder !== bUnder) return aUnder ? -1 : 1;
+          // 2) those further from their MIN target first (fairness)
+          const minA = targetHours(a.role).min;
+          const minB = targetHours(b.role).min;
+          const gapA = minA - state.hoursAssigned[a.id];
+          const gapB = minB - state.hoursAssigned[b.id];
+          if (gapA !== gapB) return gapB - gapA;
+          // 3) cheapest
+          return a.hourlyRate - b.hourlyRate;
         });
 
-    // managers - prefer open slot
-    let needed = req.managers;
-    for (const { e, i } of candidates((x) => x.role === "Manager")) {
-      if (needed <= 0) break;
-      assign(i, d, pickShift(d, e, "open"));
-      needed--;
-    }
-    // supervisors - cover close
-    needed = req.supervisors;
-    for (const { e, i } of candidates((x) => x.role === "Supervisor")) {
-      if (needed <= 0) break;
-      const slot = i % 2 === 0 ? "close" : "open";
-      assign(i, d, pickShift(d, e, slot));
-      needed--;
-    }
-    // general - mix open/close/mid
-    needed = req.general;
-    let toggle = 0;
-    for (const { e, i } of candidates(
-      (x) => x.role === "Full time" || x.role === "Part time",
-    )) {
-      if (needed <= 0) break;
-      const slot = toggle % 3 === 0 ? "open" : toggle % 3 === 1 ? "close" : "mid";
-      assign(i, d, pickShift(d, e, slot as "open" | "close" | "mid"));
-      toggle++;
-      needed--;
+      const pick = candidates[0];
+      if (!pick) continue; // leave gap → coverage check will flag it
+      assign(pick.id, d, shiftFor(section, d, pick.role, slotIdx), section);
+      slotIdx++;
     }
   }
 
-  // totals
+  // Totals
   const dailyCost = Array(7).fill(0);
   rows.forEach((r) => {
     const emp = employees.find((e) => e.id === r.employeeId)!;
@@ -123,21 +158,48 @@ export function generateRota(weekStartISO: string, employees: Employee[]): Rota 
   return { weekStartISO, rows, dailyCost };
 }
 
-export function checkCoverage(rota: Rota, employees: Employee[]) {
+export function checkCoverage(
+  rota: Rota,
+  employees: Employee[],
+  dailyBudget: number[],
+) {
   const issues: { day: number; message: string }[] = [];
+  const empMap = new Map(employees.map((e) => [e.id, e]));
+  const rush = detectRush(dailyBudget);
+
   for (let d = 0; d < 7; d++) {
-    const onShift = rota.rows.filter((r) => r.days[d].shift);
-    const empMap = (id: string) => employees.find((e) => e.id === id)!;
-    const managers = onShift.filter((r) => empMap(r.employeeId).role === "Manager").length;
-    const supervisors = onShift.filter((r) => empMap(r.employeeId).role === "Supervisor").length;
-    const general = onShift.filter((r) => {
-      const role = empMap(r.employeeId).role;
-      return role === "Full time" || role === "Part time";
-    }).length;
-    const req = dailyRequirement(d);
-    if (managers < req.managers) issues.push({ day: d, message: `Need ${req.managers} Manager` });
-    if (supervisors < req.supervisors) issues.push({ day: d, message: `Need ${req.supervisors} Supervisor` });
-    if (general < req.general) issues.push({ day: d, message: `Need ${req.general} general staff` });
+    const required = requiredSections(d, rush[d]);
+    // Count per section
+    const filled: Record<string, number> = {};
+    rota.rows.forEach((r) => {
+      const a = r.days[d];
+      if (a.shift && a.section) {
+        filled[a.section] = (filled[a.section] ?? 0) + 1;
+      }
+    });
+    const need: Record<string, number> = {};
+    required.forEach((s) => (need[s] = (need[s] ?? 0) + 1));
+    Object.entries(need).forEach(([sec, n]) => {
+      const have = filled[sec] ?? 0;
+      if (have < n) {
+        issues.push({ day: d, message: `${sec}: ${have}/${n}` });
+      }
+    });
+
+    // Hour band warnings (weekly, only flagged once on Sun)
+    if (d === 6) {
+      employees.forEach((e) => {
+        const total = rota.rows.find((r) => r.employeeId === e.id)?.totalHours ?? 0;
+        const t = targetHours(e.role);
+        if (total < t.min && total > 0) {
+          issues.push({ day: 6, message: `${e.name} under target (${total}/${t.min}h)` });
+        }
+        if (total > t.max) {
+          issues.push({ day: 6, message: `${e.name} over cap (${total}/${t.max}h)` });
+        }
+      });
+    }
+    void empMap;
   }
   return issues;
 }
@@ -145,6 +207,7 @@ export function checkCoverage(rota: Rota, employees: Employee[]) {
 export function suggestReplacement(
   rota: Rota,
   employees: Employee[],
+  dailyBudget: number[],
   employeeId: string,
   dayIdx: number,
 ) {
@@ -154,28 +217,39 @@ export function suggestReplacement(
   }
   const original = employees.find((e) => e.id === employeeId)!;
   const shift = row.days[dayIdx].shift!;
+  const section = row.days[dayIdx].section ?? null;
 
-  // Simulate removal — does coverage still hold?
+  // Simulate removal
   const simulated: Rota = {
     ...rota,
     rows: rota.rows.map((r) =>
       r.employeeId === employeeId
-        ? { ...r, days: r.days.map((d, i) => (i === dayIdx ? { shift: null } : d)) }
+        ? { ...r, days: r.days.map((d, i) => (i === dayIdx ? { shift: null, section: null } : d)) }
         : r,
     ),
     dailyCost: [...rota.dailyCost],
   };
-  const issues = checkCoverage(simulated, employees).filter((x) => x.day === dayIdx);
+  const issues = checkCoverage(simulated, employees, dailyBudget).filter((x) => x.day === dayIdx);
 
   if (issues.length === 0) {
-    return { needed: false, replacements: [] as Employee[], costDelta: -shift.hours * original.hourlyRate };
+    return {
+      needed: false,
+      replacements: [] as Employee[],
+      costDelta: -shift.hours * original.hourlyRate,
+    };
   }
+
+  // Eligible replacements: same section pool, available, not already on shift this day
+  const allowedRoles =
+    section === "Manager" ? ["Manager"]
+    : section === "Supervisor" ? ["Supervisor"]
+    : ["Full time", "Part time"];
 
   const candidates = employees
     .filter(
       (e) =>
         e.id !== employeeId &&
-        e.role === original.role &&
+        allowedRoles.includes(e.role) &&
         e.availability[dayIdx] &&
         !rota.rows.find((r) => r.employeeId === e.id)?.days[dayIdx].shift,
     )
