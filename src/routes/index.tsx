@@ -335,6 +335,38 @@ function RotaPage() {
 
         {/* Side panel */}
         <aside className="w-full xl:w-[360px] flex flex-col gap-4">
+          {rebalance && (
+            <div
+              className={cn(
+                "border rounded-xl p-5",
+                rebalance.status === "ok"
+                  ? "bg-success/5 border-success/30"
+                  : "bg-destructive/5 border-destructive/30",
+              )}
+            >
+              <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground mb-3 flex items-center gap-2">
+                <Sparkles className="size-3.5" /> Auto-Rebalance
+              </h2>
+              <div className="flex items-start gap-2">
+                {rebalance.status === "ok" ? (
+                  <CheckCircle2 className="size-4 text-success mt-0.5 shrink-0" />
+                ) : (
+                  <AlertTriangle className="size-4 text-destructive mt-0.5 shrink-0" />
+                )}
+                <p className="text-xs leading-relaxed">{rebalance.message}</p>
+              </div>
+              {rebalance.trim && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3 w-full"
+                  onClick={applyTrim}
+                >
+                  Apply suggested trim (−£{rebalance.trim.saving.toFixed(2)})
+                </Button>
+              )}
+            </div>
+          )}
           <div className="bg-panel border border-border rounded-xl p-5">
             <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground mb-4">
               Coverage Anomalies
