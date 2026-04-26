@@ -234,9 +234,18 @@ function RotaPage() {
               employees={employees}
               weekStart={weekStart}
               dailyBudget={dailyBudget}
+              onCellClick={openEditor}
             />
           )}
         </div>
+
+        <ShiftEditor
+          open={!!editor}
+          initial={editor}
+          onClose={closeEditor}
+          onSave={handleEditorSave}
+          onRemove={handleEditorRemove}
+        />
 
         {/* Side panel */}
         <aside className="w-full xl:w-[360px] flex flex-col gap-4">
