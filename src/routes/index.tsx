@@ -18,8 +18,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useStore, setRota, getBudgetForWeek, setBudget, getBudget } from "@/lib/store";
-import { generateRota, fmtShift, checkCoverage, suggestReplacement } from "@/lib/rota";
-import { DAYS } from "@/lib/types";
+import { generateRota, fmtShift, checkCoverage, suggestReplacement, recomputeTotals } from "@/lib/rota";
+import { DAYS, type Section, type Shift } from "@/lib/types";
+import { ShiftEditor, type ShiftEditorState } from "@/components/ShiftEditor";
 
 export const Route = createFileRoute("/")({
   component: RotaPage,
@@ -33,6 +34,38 @@ function RotaPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [swapEmp, setSwapEmp] = useState<string>("");
   const [swapDay, setSwapDay] = useState<string>("");
+  const [editor, setEditor] = useState<ShiftEditorState | null>(null);
+
+  const openEditor = (state: ShiftEditorState) => setEditor(state);
+  const closeEditor = () => setEditor(null);
+
+  const writeShift = (employeeId: string, dayIdx: number, shift: Shift | null, section: Section | null) => {
+    if (!rota) return;
+    const next = {
+      ...rota,
+      rows: rota.rows.map((r) =>
+        r.employeeId === employeeId
+          ? {
+              ...r,
+              days: r.days.map((d, i) => (i === dayIdx ? { shift, section } : d)),
+            }
+          : r,
+      ),
+    };
+    setRota(recomputeTotals(next, employees));
+  };
+
+  const handleEditorSave = (next: { shift: Shift; section: Section }) => {
+    if (!editor) return;
+    writeShift(editor.employeeId, editor.dayIdx, next.shift, next.section);
+    closeEditor();
+  };
+
+  const handleEditorRemove = () => {
+    if (!editor) return;
+    writeShift(editor.employeeId, editor.dayIdx, null, null);
+    closeEditor();
+  };
 
   const weekEnd = addDays(weekStart, 6);
   const weekISO = weekStart.toISOString();
@@ -201,9 +234,18 @@ function RotaPage() {
               employees={employees}
               weekStart={weekStart}
               dailyBudget={dailyBudget}
+              onCellClick={openEditor}
             />
           )}
         </div>
+
+        <ShiftEditor
+          open={!!editor}
+          initial={editor}
+          onClose={closeEditor}
+          onSave={handleEditorSave}
+          onRemove={handleEditorRemove}
+        />
 
         {/* Side panel */}
         <aside className="w-full xl:w-[360px] flex flex-col gap-4">
@@ -368,11 +410,13 @@ function RotaTable({
   employees,
   weekStart,
   dailyBudget,
+  onCellClick,
 }: {
   rota: ReturnType<typeof generateRota>;
   employees: ReturnType<typeof useStore>["employees"];
   weekStart: Date;
   dailyBudget: number[];
+  onCellClick: (state: ShiftEditorState) => void;
 }) {
   // Mark rush days (top-bracket budget or weekend) for visual cue
   const valid = dailyBudget.filter((v) => v > 0);
@@ -430,23 +474,44 @@ function RotaTable({
                     </div>
                   </div>
                 </td>
-                {row.days.map((d, i) => (
-                  <td key={i} className="p-2 text-center">
-                    {d.shift ? (
-                      <div className="bg-surface border border-border p-2 rounded">
-                        <p className="text-[11px] font-medium tabular">{fmtShift(d.shift)}</p>
-                        <p className="text-[9px] text-muted-foreground tabular">{d.shift.hours}h</p>
-                        {d.section && (
-                          <p className="text-[9px] mt-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/20 truncate">
-                            {d.section}
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-[11px] text-muted-foreground/60">OFF</span>
-                    )}
-                  </td>
-                ))}
+                {row.days.map((d, i) => {
+                  const open = () =>
+                    onCellClick({
+                      employeeId: row.employeeId,
+                      employeeName: emp.name,
+                      dayIdx: i,
+                      dayLabel: `${DAYS[i]} ${format(addDays(weekStart, i), "d MMM")}`,
+                      shift: d.shift,
+                      section: d.section ?? null,
+                    });
+                  return (
+                    <td key={i} className="p-2 text-center">
+                      {d.shift ? (
+                        <button
+                          type="button"
+                          onClick={open}
+                          className="w-full bg-surface border border-border p-2 rounded transition hover:border-primary hover:bg-primary/5 cursor-pointer"
+                        >
+                          <p className="text-[11px] font-medium tabular">{fmtShift(d.shift)}</p>
+                          <p className="text-[9px] text-muted-foreground tabular">{d.shift.hours}h</p>
+                          {d.section && (
+                            <p className="text-[9px] mt-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/20 truncate">
+                              {d.section}
+                            </p>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={open}
+                          className="w-full text-[11px] text-muted-foreground/60 hover:text-primary py-3 rounded border border-dashed border-transparent hover:border-primary/40 transition"
+                        >
+                          OFF
+                        </button>
+                      )}
+                    </td>
+                  );
+                })}
                 <td className="p-3 text-right tabular text-sm font-medium">
                   {row.totalHours.toFixed(1)}h
                 </td>
