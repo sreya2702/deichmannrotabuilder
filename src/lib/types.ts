@@ -3,6 +3,17 @@ export type Role = "Manager" | "Supervisor" | "Full time" | "Part time";
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 export type Day = (typeof DAYS)[number];
 
+export const SECTIONS = [
+  "Manager",
+  "Supervisor",
+  "Ladies 1",
+  "Ladies 2/3",
+  "Mens",
+  "Kids",
+  "Tills",
+] as const;
+export type Section = (typeof SECTIONS)[number];
+
 export interface Employee {
   id: string;
   name: string;
@@ -21,6 +32,7 @@ export interface Shift {
 
 export interface DayAssignment {
   shift: Shift | null;
+  section?: Section | null;
 }
 
 export interface RotaRow {
@@ -34,4 +46,13 @@ export interface Rota {
   weekStartISO: string;
   rows: RotaRow[];
   dailyCost: number[];
+}
+
+// A week in the imported sales plan (Mon..Sun aligned)
+export interface SalesPlanWeek {
+  // ISO date (yyyy-mm-dd) of the Monday that starts this week
+  weekStartISO: string;
+  label: string; // e.g. "Week 1"
+  daily: number[]; // 7 numbers
+  weekly: number; // sum / planned
 }
