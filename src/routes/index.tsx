@@ -18,8 +18,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useStore, setRota, getBudgetForWeek, setBudget, getBudget } from "@/lib/store";
-import { generateRota, fmtShift, checkCoverage, suggestReplacement } from "@/lib/rota";
-import { DAYS } from "@/lib/types";
+import { generateRota, fmtShift, checkCoverage, suggestReplacement, recomputeTotals } from "@/lib/rota";
+import { DAYS, type Section, type Shift } from "@/lib/types";
+import { ShiftEditor, type ShiftEditorState } from "@/components/ShiftEditor";
 
 export const Route = createFileRoute("/")({
   component: RotaPage,
