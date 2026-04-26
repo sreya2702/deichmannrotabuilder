@@ -356,3 +356,69 @@ export function suggestReplacement(
     : 0;
   return { needed: true, replacements: candidates, costDelta };
 }
+
+/**
+ * After a manual edit, look at where the rota stands vs daily/weekly budget
+ * and suggest a single concrete trim if over budget.
+ */
+export interface RebalanceSuggestion {
+  status: "ok" | "warning" | "over";
+  message: string;
+  trim?: { employeeId: string; employeeName: string; dayIdx: number; saving: number };
+}
+
+export function suggestRebalance(
+  rota: Rota,
+  employees: Employee[],
+  dailyBudget: number[],
+  weeklyBudget: number,
+): RebalanceSuggestion {
+  const empMap = new Map(employees.map((e) => [e.id, e]));
+  const totalCost = rota.rows.reduce((s, r) => s + r.cost, 0);
+  const overWeekly = totalCost > weeklyBudget;
+  const overDayIdx = rota.dailyCost.findIndex((c, i) => c > dailyBudget[i] && dailyBudget[i] > 0);
+
+  if (!overWeekly && overDayIdx === -1) {
+    const pct = weeklyBudget > 0 ? (totalCost / weeklyBudget) * 100 : 0;
+    return { status: "ok", message: `Within budget (${pct.toFixed(1)}% of weekly).` };
+  }
+
+  // Find best candidate to trim — PT first, highest cost shift on the offending day if any.
+  const targetDay = overDayIdx;
+  type Cand = { rowIdx: number; dayIdx: number; saving: number; emp: Employee; section: Section | null };
+  const cands: Cand[] = [];
+  rota.rows.forEach((r, ri) => {
+    const emp = empMap.get(r.employeeId)!;
+    if (emp.role === "Manager" || emp.role === "Supervisor") return;
+    r.days.forEach((d, di) => {
+      if (!d.shift || !d.section) return;
+      if (targetDay !== -1 && di !== targetDay) return;
+      const sameSection = rota.rows.filter(
+        (rr) => rr.days[di].section === d.section && rr.days[di].shift,
+      ).length;
+      if (sameSection <= 1) return;
+      cands.push({
+        rowIdx: ri,
+        dayIdx: di,
+        saving: d.shift.hours * emp.hourlyRate,
+        emp,
+        section: d.section,
+      });
+    });
+  });
+  cands.sort((a, b) => {
+    if (a.emp.role !== b.emp.role) return a.emp.role === "Part time" ? -1 : 1;
+    return b.saving - a.saving;
+  });
+
+  const top = cands[0];
+  const overBy = overWeekly ? totalCost - weeklyBudget : (rota.dailyCost[targetDay] - dailyBudget[targetDay]);
+  const where = overWeekly ? "weekly budget" : `${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][targetDay]} budget`;
+  const base = `Over ${where} by £${overBy.toFixed(0)}.`;
+  if (!top) return { status: "over", message: `${base} No safe trim available — review coverage.` };
+  return {
+    status: "over",
+    message: `${base} Suggest dropping ${top.emp.name}'s ${top.section} shift to save £${top.saving.toFixed(2)}.`,
+    trim: { employeeId: top.emp.id, employeeName: top.emp.name, dayIdx: top.dayIdx, saving: top.saving },
+  };
+}
