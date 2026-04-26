@@ -34,6 +34,38 @@ function RotaPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [swapEmp, setSwapEmp] = useState<string>("");
   const [swapDay, setSwapDay] = useState<string>("");
+  const [editor, setEditor] = useState<ShiftEditorState | null>(null);
+
+  const openEditor = (state: ShiftEditorState) => setEditor(state);
+  const closeEditor = () => setEditor(null);
+
+  const writeShift = (employeeId: string, dayIdx: number, shift: Shift | null, section: Section | null) => {
+    if (!rota) return;
+    const next = {
+      ...rota,
+      rows: rota.rows.map((r) =>
+        r.employeeId === employeeId
+          ? {
+              ...r,
+              days: r.days.map((d, i) => (i === dayIdx ? { shift, section } : d)),
+            }
+          : r,
+      ),
+    };
+    setRota(recomputeTotals(next, employees));
+  };
+
+  const handleEditorSave = (next: { shift: Shift; section: Section }) => {
+    if (!editor) return;
+    writeShift(editor.employeeId, editor.dayIdx, next.shift, next.section);
+    closeEditor();
+  };
+
+  const handleEditorRemove = () => {
+    if (!editor) return;
+    writeShift(editor.employeeId, editor.dayIdx, null, null);
+    closeEditor();
+  };
 
   const weekEnd = addDays(weekStart, 6);
   const weekISO = weekStart.toISOString();
