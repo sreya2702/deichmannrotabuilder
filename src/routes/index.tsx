@@ -18,7 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useStore, setRota, getBudgetForWeek, setBudget, getBudget } from "@/lib/store";
-import { generateRota, fmtShift, checkCoverage, suggestReplacement, recomputeTotals } from "@/lib/rota";
+import { generateRota, fmtShift, checkCoverage, suggestReplacement, recomputeTotals, suggestRebalance } from "@/lib/rota";
 import { DAYS, type Section, type Shift } from "@/lib/types";
 import { ShiftEditor, type ShiftEditorState } from "@/components/ShiftEditor";
 
@@ -84,7 +84,7 @@ function RotaPage() {
   }, [planWeek.inPlan, planWeek.weekly, planWeek.daily.join(",")]);
 
   const handleGenerate = () => {
-    const r = generateRota(weekISO, employees, dailyBudget);
+    const r = generateRota(weekISO, employees, dailyBudget, weeklyBudget);
     setRota(r);
   };
 
@@ -92,11 +92,22 @@ function RotaPage() {
   const totalHours = rota?.rows.reduce((s, r) => s + r.totalHours, 0) ?? 0;
   const remaining = weeklyBudget - totalCost;
   const overBudget = totalCost > weeklyBudget;
+  const weeklyPct = weeklyBudget > 0 ? (totalCost / weeklyBudget) * 100 : 0;
 
   const issues = useMemo(
     () => (rota ? checkCoverage(rota, employees, dailyBudget) : []),
     [rota, employees, dailyBudget],
   );
+
+  const rebalance = useMemo(
+    () => (rota ? suggestRebalance(rota, employees, dailyBudget, weeklyBudget) : null),
+    [rota, employees, dailyBudget, weeklyBudget],
+  );
+
+  const applyTrim = () => {
+    if (!rota || !rebalance?.trim) return;
+    writeShift(rebalance.trim.employeeId, rebalance.trim.dayIdx, null, null);
+  };
 
   const swap = useMemo(() => {
     if (!rota || !swapEmp || swapDay === "") return null;
@@ -222,7 +233,82 @@ function RotaPage() {
         <Kpi label="Labour Hours" value={totalHours.toFixed(1)} />
       </div>
 
-      {/* Main split */}
+      {/* Live Budget Bar */}
+      {rota && (
+        <div className="bg-panel border border-border rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Live Budget Tracker
+            </h2>
+            <span
+              className={cn(
+                "text-xs font-semibold tabular px-2 py-0.5 rounded border",
+                overBudget
+                  ? "bg-destructive/10 text-destructive border-destructive/30"
+                  : weeklyPct > 90
+                    ? "bg-warning/10 text-warning border-warning/30"
+                    : "bg-success/10 text-success border-success/30",
+              )}
+            >
+              {weeklyPct.toFixed(1)}% of weekly
+            </span>
+          </div>
+          {/* Weekly progress bar */}
+          <div className="mb-2 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>Weekly £{totalCost.toFixed(0)} / £{weeklyBudget.toLocaleString()}</span>
+            <span className={cn("tabular font-medium", overBudget ? "text-destructive" : "text-success")}>
+              {overBudget ? `+£${Math.abs(remaining).toFixed(0)} over` : `£${remaining.toFixed(0)} left`}
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-surface overflow-hidden border border-border">
+            <div
+              className={cn(
+                "h-full transition-all",
+                overBudget ? "bg-destructive" : weeklyPct > 90 ? "bg-warning" : "bg-success",
+              )}
+              style={{ width: `${Math.min(100, weeklyPct)}%` }}
+            />
+          </div>
+          {/* Daily mini bars */}
+          <div className="grid grid-cols-7 gap-2 mt-4">
+            {DAYS.map((d, i) => {
+              const cost = rota.dailyCost[i];
+              const budget = dailyBudget[i] || 0;
+              const pct = budget > 0 ? (cost / budget) * 100 : 0;
+              const dayOver = cost > budget && budget > 0;
+              return (
+                <div key={d} className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground font-medium">{d}</span>
+                    <span
+                      className={cn(
+                        "tabular font-semibold",
+                        dayOver ? "text-destructive" : "text-muted-foreground",
+                      )}
+                    >
+                      {budget > 0 ? `${pct.toFixed(0)}%` : "—"}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-surface overflow-hidden border border-border">
+                    <div
+                      className={cn(
+                        "h-full",
+                        dayOver ? "bg-destructive" : pct > 90 ? "bg-warning" : "bg-success",
+                      )}
+                      style={{ width: `${Math.min(100, pct)}%` }}
+                    />
+                  </div>
+                  <div className="text-[9px] text-muted-foreground tabular text-center">
+                    £{cost.toFixed(0)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+
       <div className="flex flex-col xl:flex-row gap-6">
         {/* Rota table */}
         <div className="flex-1 min-w-0 bg-panel border border-border rounded-xl overflow-hidden">
@@ -249,6 +335,38 @@ function RotaPage() {
 
         {/* Side panel */}
         <aside className="w-full xl:w-[360px] flex flex-col gap-4">
+          {rebalance && (
+            <div
+              className={cn(
+                "border rounded-xl p-5",
+                rebalance.status === "ok"
+                  ? "bg-success/5 border-success/30"
+                  : "bg-destructive/5 border-destructive/30",
+              )}
+            >
+              <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground mb-3 flex items-center gap-2">
+                <Sparkles className="size-3.5" /> Auto-Rebalance
+              </h2>
+              <div className="flex items-start gap-2">
+                {rebalance.status === "ok" ? (
+                  <CheckCircle2 className="size-4 text-success mt-0.5 shrink-0" />
+                ) : (
+                  <AlertTriangle className="size-4 text-destructive mt-0.5 shrink-0" />
+                )}
+                <p className="text-xs leading-relaxed">{rebalance.message}</p>
+              </div>
+              {rebalance.trim && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3 w-full"
+                  onClick={applyTrim}
+                >
+                  Apply suggested trim (−£{rebalance.trim.saving.toFixed(2)})
+                </Button>
+              )}
+            </div>
+          )}
           <div className="bg-panel border border-border rounded-xl p-5">
             <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground mb-4">
               Coverage Anomalies
