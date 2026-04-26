@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format, startOfWeek, addDays, addWeeks, subWeeks } from "date-fns";
 import {
   Calendar as CalendarIcon,
@@ -10,13 +10,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   ArrowRightLeft,
+  Flame,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { useStore, setRota } from "@/lib/store";
+import { useStore, setRota, getBudgetForWeek, setBudget, getBudget } from "@/lib/store";
 import { generateRota, fmtShift, checkCoverage, suggestReplacement } from "@/lib/rota";
 import { DAYS } from "@/lib/types";
 
@@ -25,9 +26,9 @@ export const Route = createFileRoute("/")({
 });
 
 function RotaPage() {
-  const { employees, budget, rota } = useStore();
+  const { employees, rota } = useStore();
   const [weekStart, setWeekStart] = useState<Date>(() =>
-    startOfWeek(new Date(), { weekStartsOn: 1 }),
+    startOfWeek(new Date(2026, 0, 5), { weekStartsOn: 1 }), // default to Mon Jan 5 2026 (in plan)
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [swapEmp, setSwapEmp] = useState<string>("");
@@ -36,25 +37,38 @@ function RotaPage() {
   const weekEnd = addDays(weekStart, 6);
   const weekISO = weekStart.toISOString();
 
+  // Auto-load this week's budget from the 26-week sales plan
+  const planWeek = useMemo(() => getBudgetForWeek(weekStart), [weekStart]);
+  const dailyBudget = planWeek.inPlan ? planWeek.daily : getBudget().daily;
+  const weeklyBudget = planWeek.inPlan ? planWeek.weekly : getBudget().weekly;
+
+  // Persist the loaded budget so the Budget page reflects it
+  useEffect(() => {
+    if (planWeek.inPlan) {
+      const cur = getBudget();
+      setBudget({ ...cur, weekly: planWeek.weekly, daily: planWeek.daily });
+    }
+  }, [planWeek.inPlan, planWeek.weekly, planWeek.daily.join(",")]);
+
   const handleGenerate = () => {
-    const r = generateRota(weekISO, employees);
+    const r = generateRota(weekISO, employees, dailyBudget);
     setRota(r);
   };
 
   const totalCost = rota?.rows.reduce((s, r) => s + r.cost, 0) ?? 0;
   const totalHours = rota?.rows.reduce((s, r) => s + r.totalHours, 0) ?? 0;
-  const remaining = budget.weekly - totalCost;
-  const overBudget = totalCost > budget.weekly;
+  const remaining = weeklyBudget - totalCost;
+  const overBudget = totalCost > weeklyBudget;
 
   const issues = useMemo(
-    () => (rota ? checkCoverage(rota, employees) : []),
-    [rota, employees],
+    () => (rota ? checkCoverage(rota, employees, dailyBudget) : []),
+    [rota, employees, dailyBudget],
   );
 
   const swap = useMemo(() => {
     if (!rota || !swapEmp || swapDay === "") return null;
-    return suggestReplacement(rota, employees, swapEmp, parseInt(swapDay));
-  }, [rota, employees, swapEmp, swapDay]);
+    return suggestReplacement(rota, employees, dailyBudget, swapEmp, parseInt(swapDay));
+  }, [rota, employees, dailyBudget, swapEmp, swapDay]);
 
   const exportCSV = () => {
     if (!rota) return;
@@ -62,7 +76,7 @@ function RotaPage() {
       "Team Member",
       "Role",
       "Contracted Hours",
-      ...DAYS.flatMap((d) => [`${d} Hours`, `${d} Times`]),
+      ...DAYS.flatMap((d) => [`${d} Hours`, `${d} Times`, `${d} Section`]),
       "Total Hours",
       "Hourly Rate",
       "Cost",
@@ -72,6 +86,7 @@ function RotaPage() {
       const dayCells = r.days.flatMap((d) => [
         d.shift ? d.shift.hours.toString() : "",
         d.shift ? fmtShift(d.shift) : "OFF",
+        d.section ?? "",
       ]);
       return [
         emp.name,
@@ -100,7 +115,7 @@ function RotaPage() {
         <div className="flex items-center gap-6">
           <div>
             <h1 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground mb-1">
-              Weekly Rota
+              Weekly Rota — {planWeek.label}
             </h1>
             <div className="flex items-center gap-2">
               <Button
@@ -159,12 +174,12 @@ function RotaPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Kpi label="Weekly Budget" value={`£${budget.weekly.toLocaleString()}`} />
+        <Kpi label="Weekly Budget" value={`£${weeklyBudget.toLocaleString()}`} />
         <Kpi
           label="Scheduled Cost"
           value={`£${totalCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
           tone={overBudget ? "danger" : "success"}
-          badge={overBudget ? "OVER" : "UNDER"}
+          badge={rota ? (overBudget ? "OVER" : "UNDER") : undefined}
         />
         <Kpi
           label="Remaining"
@@ -185,7 +200,7 @@ function RotaPage() {
               rota={rota}
               employees={employees}
               weekStart={weekStart}
-              dailyBudget={budget.daily}
+              dailyBudget={dailyBudget}
             />
           )}
         </div>
@@ -198,16 +213,16 @@ function RotaPage() {
             </h2>
             {issues.length === 0 ? (
               <div className="flex items-center gap-3 text-sm text-success">
-                <CheckCircle2 className="size-4" /> All shifts staffed correctly
+                <CheckCircle2 className="size-4" /> All sections covered, hours within bands
               </div>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-2 max-h-64 overflow-y-auto">
                 {issues.map((i, idx) => (
                   <li
                     key={idx}
                     className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border-l-2 border-destructive"
                   >
-                    <AlertTriangle className="size-4 text-destructive mt-0.5" />
+                    <AlertTriangle className="size-4 text-destructive mt-0.5 shrink-0" />
                     <div className="text-xs">
                       <span className="font-semibold">{DAYS[i.day]}:</span> {i.message}
                     </div>
@@ -339,7 +354,7 @@ function EmptyState({ onGenerate }: { onGenerate: () => void }) {
       </div>
       <h3 className="font-semibold mb-1">No rota generated yet</h3>
       <p className="text-sm text-muted-foreground mb-6">
-        Pick a week and click Generate Rota to build a schedule based on availability and budget.
+        Pick a week and click Generate Rota to build a schedule based on availability, sections and budget.
       </p>
       <Button onClick={onGenerate} className="bg-primary text-primary-foreground">
         <Sparkles className="size-4" /> Generate Rota
@@ -359,6 +374,11 @@ function RotaTable({
   weekStart: Date;
   dailyBudget: number[];
 }) {
+  // Mark rush days (top-bracket budget or weekend) for visual cue
+  const valid = dailyBudget.filter((v) => v > 0);
+  const avg = valid.length ? valid.reduce((s, n) => s + n, 0) / valid.length : 0;
+  const rush = dailyBudget.map((v, i) => i >= 5 || v >= avg * 1.15);
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left border-collapse">
@@ -370,9 +390,12 @@ function RotaTable({
             {DAYS.map((d, i) => (
               <th
                 key={d}
-                className="p-4 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-center"
+                className="p-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-center min-w-[110px]"
               >
-                {d}
+                <div className="flex items-center justify-center gap-1">
+                  {d}
+                  {rush[i] && <Flame className="size-3 text-warning" />}
+                </div>
                 <span className="block text-[10px] opacity-50 font-normal">
                   {format(addDays(weekStart, i), "d MMM")}
                 </span>
@@ -389,7 +412,6 @@ function RotaTable({
         <tbody className="divide-y divide-border/50">
           {rota.rows.map((row) => {
             const emp = employees.find((e) => e.id === row.employeeId)!;
-            const overContract = row.totalHours > emp.contractedHours;
             return (
               <tr key={row.employeeId} className="hover:bg-white/[0.02]">
                 <td className="p-3 sticky left-0 bg-panel">
@@ -403,7 +425,7 @@ function RotaTable({
                     <div>
                       <p className="text-sm font-medium">{emp.name}</p>
                       <p className="text-[10px] text-muted-foreground tabular">
-                        {emp.contractedHours}h • £{emp.hourlyRate.toFixed(2)} • {emp.role}
+                        £{emp.hourlyRate.toFixed(2)} • {emp.role}
                       </p>
                     </div>
                   </div>
@@ -413,21 +435,19 @@ function RotaTable({
                     {d.shift ? (
                       <div className="bg-surface border border-border p-2 rounded">
                         <p className="text-[11px] font-medium tabular">{fmtShift(d.shift)}</p>
-                        <p className="text-[9px] text-muted-foreground tabular">
-                          {d.shift.hours}h
-                        </p>
+                        <p className="text-[9px] text-muted-foreground tabular">{d.shift.hours}h</p>
+                        {d.section && (
+                          <p className="text-[9px] mt-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/20 truncate">
+                            {d.section}
+                          </p>
+                        )}
                       </div>
                     ) : (
                       <span className="text-[11px] text-muted-foreground/60">OFF</span>
                     )}
                   </td>
                 ))}
-                <td
-                  className={cn(
-                    "p-3 text-right tabular text-sm font-medium",
-                    overContract && "text-warning",
-                  )}
-                >
+                <td className="p-3 text-right tabular text-sm font-medium">
                   {row.totalHours.toFixed(1)}h
                 </td>
                 <td className="p-3 text-right tabular text-sm font-semibold">
@@ -449,7 +469,9 @@ function RotaTable({
                   <div className={cn("font-semibold", over ? "text-destructive" : "text-success")}>
                     £{cost.toFixed(0)}
                   </div>
-                  <div className="text-[9px] text-muted-foreground">/ £{dailyBudget[i]}</div>
+                  <div className="text-[9px] text-muted-foreground">
+                    / £{dailyBudget[i].toLocaleString()}
+                  </div>
                 </td>
               );
             })}
