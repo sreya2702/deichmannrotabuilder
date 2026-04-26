@@ -231,6 +231,11 @@ export function generateRota(
     }
   }
 
+  // Budget-aware trim: if a weekly budget cap was supplied, drop the most
+  // expensive non-essential PT/FT shifts until we fit under it.
+  const budgetCap = weeklyBudget ?? dailyBudget.reduce((s, n) => s + n, 0) * 0.12; // default 12% labour cost
+  if (budgetCap > 0) trimToBudget(rows, employees, budgetCap);
+
   // Totals
   const dailyCost = Array(7).fill(0);
   rows.forEach((r) => {
