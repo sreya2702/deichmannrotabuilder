@@ -410,11 +410,13 @@ function RotaTable({
   employees,
   weekStart,
   dailyBudget,
+  onCellClick,
 }: {
   rota: ReturnType<typeof generateRota>;
   employees: ReturnType<typeof useStore>["employees"];
   weekStart: Date;
   dailyBudget: number[];
+  onCellClick: (state: ShiftEditorState) => void;
 }) {
   // Mark rush days (top-bracket budget or weekend) for visual cue
   const valid = dailyBudget.filter((v) => v > 0);
@@ -472,23 +474,44 @@ function RotaTable({
                     </div>
                   </div>
                 </td>
-                {row.days.map((d, i) => (
-                  <td key={i} className="p-2 text-center">
-                    {d.shift ? (
-                      <div className="bg-surface border border-border p-2 rounded">
-                        <p className="text-[11px] font-medium tabular">{fmtShift(d.shift)}</p>
-                        <p className="text-[9px] text-muted-foreground tabular">{d.shift.hours}h</p>
-                        {d.section && (
-                          <p className="text-[9px] mt-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/20 truncate">
-                            {d.section}
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-[11px] text-muted-foreground/60">OFF</span>
-                    )}
-                  </td>
-                ))}
+                {row.days.map((d, i) => {
+                  const open = () =>
+                    onCellClick({
+                      employeeId: row.employeeId,
+                      employeeName: emp.name,
+                      dayIdx: i,
+                      dayLabel: `${DAYS[i]} ${format(addDays(weekStart, i), "d MMM")}`,
+                      shift: d.shift,
+                      section: d.section ?? null,
+                    });
+                  return (
+                    <td key={i} className="p-2 text-center">
+                      {d.shift ? (
+                        <button
+                          type="button"
+                          onClick={open}
+                          className="w-full bg-surface border border-border p-2 rounded transition hover:border-primary hover:bg-primary/5 cursor-pointer"
+                        >
+                          <p className="text-[11px] font-medium tabular">{fmtShift(d.shift)}</p>
+                          <p className="text-[9px] text-muted-foreground tabular">{d.shift.hours}h</p>
+                          {d.section && (
+                            <p className="text-[9px] mt-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/20 truncate">
+                              {d.section}
+                            </p>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={open}
+                          className="w-full text-[11px] text-muted-foreground/60 hover:text-primary py-3 rounded border border-dashed border-transparent hover:border-primary/40 transition"
+                        >
+                          OFF
+                        </button>
+                      )}
+                    </td>
+                  );
+                })}
                 <td className="p-3 text-right tabular text-sm font-medium">
                   {row.totalHours.toFixed(1)}h
                 </td>
