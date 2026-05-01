@@ -154,16 +154,22 @@ export function setRota(next: Rota | null) {
 }
 
 /**
- * For a given Monday, return the daily budgets (Mon..Sun) from the sales plan,
- * the implied weekly total, and a label describing which sales-plan weeks it spans.
+ * For a given Monday, return:
+ *  - dailySales: the sales TARGETS for each day (Mon..Sun) from the 26-week plan
+ *  - weeklySales: implied weekly sales target
+ *  - daily: the LABOUR budget per day (£4,862 split proportionally to sales)
+ *  - weekly: the fixed labour budget cap (£4,862)
+ *  - label / inPlan: which sales-plan weeks the range covers
  */
 export function getBudgetForWeek(monday: Date): {
   daily: number[];
   weekly: number;
+  dailySales: number[];
+  weeklySales: number;
   label: string;
   inPlan: boolean;
 } {
-  const daily: number[] = [];
+  const dailySales: number[] = [];
   let inPlan = false;
   const labels = new Set<string>();
   for (let i = 0; i < 7; i++) {
@@ -172,9 +178,8 @@ export function getBudgetForWeek(monday: Date): {
     const key = format(d, "yyyy-MM-dd");
     const v = SALES_MAP[key];
     if (v !== undefined) {
-      daily.push(v);
+      dailySales.push(v);
       inPlan = true;
-      // find label for this date
       for (const blk of SALES_PLAN_RAW) {
         const start = parseISO(blk.start);
         const end = new Date(start);
@@ -185,12 +190,18 @@ export function getBudgetForWeek(monday: Date): {
         }
       }
     } else {
-      daily.push(0);
+      dailySales.push(0);
     }
   }
-  const weekly = daily.reduce((s, n) => s + n, 0);
+  const weeklySales = dailySales.reduce((s, n) => s + n, 0);
+  const weekly = WEEKLY_LABOUR_BUDGET;
+  // Split labour budget across days proportional to sales targets.
+  // Fallback: even split if no sales data for that week.
+  const daily = weeklySales > 0
+    ? dailySales.map((v) => Math.round((v / weeklySales) * weekly))
+    : Array(7).fill(Math.round(weekly / 7));
   const label = labels.size ? Array.from(labels).join(" / ") : "Outside sales plan";
-  return { daily, weekly, label, inPlan };
+  return { daily, weekly, dailySales, weeklySales, label, inPlan };
 }
 
 export function useStore() {
