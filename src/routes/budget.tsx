@@ -37,9 +37,9 @@ function BudgetPage() {
           <Wallet className="size-5 text-primary" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold">Yearly Budget</h1>
+          <h1 className="text-xl font-semibold">Labour Budget</h1>
           <p className="text-sm text-muted-foreground">
-            26-week sales plan auto-loads when you pick a week on the rota. You can still override values here.
+            Fixed weekly labour cap (£4,862). The 26-week sales plan sets revenue targets — daily labour caps are split proportional to those sales.
           </p>
         </div>
       </header>
