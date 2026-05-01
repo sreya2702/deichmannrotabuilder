@@ -218,7 +218,10 @@ function RotaPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Kpi label="Weekly Budget" value={`£${weeklyBudget.toLocaleString()}`} />
+        <Kpi
+          label="Labour Budget (Weekly)"
+          value={`£${weeklyBudget.toLocaleString()}`}
+        />
         <Kpi
           label="Scheduled Cost"
           value={`£${totalCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
@@ -230,8 +233,16 @@ function RotaPage() {
           value={`£${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
           tone={overBudget ? "danger" : undefined}
         />
-        <Kpi label="Labour Hours" value={totalHours.toFixed(1)} />
+        <Kpi
+          label={planWeek.inPlan ? "Sales Target (Weekly)" : "Labour Hours"}
+          value={planWeek.inPlan ? `£${planWeek.weeklySales.toLocaleString()}` : totalHours.toFixed(1)}
+        />
       </div>
+      {planWeek.inPlan && (
+        <p className="text-[11px] text-muted-foreground -mt-3 px-1 tabular">
+          Labour cap £{weeklyBudget.toLocaleString()}/wk ({((weeklyBudget / planWeek.weeklySales) * 100).toFixed(1)}% of £{planWeek.weeklySales.toLocaleString()} sales target). Daily caps split proportional to sales.
+        </p>
+      )}
 
       {/* Live Budget Bar */}
       {rota && (
