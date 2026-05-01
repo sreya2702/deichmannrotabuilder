@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/budget")({
   component: BudgetPage,
-  head: () => ({ meta: [{ title: "Yearly Budget — Rota Cockpit" }] }),
+  head: () => ({ meta: [{ title: "Labour Budget — Rota Cockpit" }] }),
 });
 
 function BudgetPage() {
