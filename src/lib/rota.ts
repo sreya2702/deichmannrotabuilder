@@ -250,7 +250,9 @@ export function generateRota(
     r.days.forEach((d, i) => {
       if (d.shift) {
         total += d.shift.hours;
-        dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        if (!emp.excludedFromBudget) {
+          dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        }
       }
     });
     r.totalHours = total;
