@@ -34,6 +34,8 @@ const SEED_EMPLOYEES: Employee[] = [
   { id: "e22", name: "Janah",    role: "Part time",  contractedHours: 16, hourlyRate: 11.35, availability: [false, true,  true,  false, true,  true,  true ] },
   { id: "e23", name: "Sneha",    role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  true,  true,  false, false], excludedFromBudget: true },
   { id: "e24", name: "TJ",       role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  true,  true,  false, false], excludedFromBudget: true },
+  { id: "e25", name: "Ashish",   role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [true,  false, true,  true,  false, true,  true ] },
+  { id: "e26", name: "Akash",    role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [false, true,  true,  false, true,  true,  true ] },
 ];
 
 interface BudgetCfg {
@@ -127,7 +129,7 @@ let _budget: BudgetCfg | null = null;
 let _rota: Rota | null = null;
 
 function ensure() {
-  if (_employees === null) _employees = load("rota.employees.v3", SEED_EMPLOYEES);
+  if (_employees === null) _employees = load("rota.employees.v4", SEED_EMPLOYEES);
   if (_budget === null) _budget = load("rota.budget", DEFAULT_BUDGET);
   if (_rota === null) _rota = load<Rota | null>("rota.current.v2", null);
 }
@@ -138,7 +140,7 @@ export function getEmployees(): Employee[] {
 }
 export function setEmployees(next: Employee[]) {
   _employees = next;
-  save("rota.employees.v3", next);
+  save("rota.employees.v4", next);
   emit();
 }
 export function getBudget(): BudgetCfg {

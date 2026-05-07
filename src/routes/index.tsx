@@ -84,7 +84,7 @@ function RotaPage() {
   }, [planWeek.inPlan, planWeek.weekly, planWeek.daily.join(",")]);
 
   const handleGenerate = () => {
-    const r = generateRota(weekISO, employees, dailyBudget, weeklyBudget);
+    const r = generateRota(weekISO, employees, dailyBudget, weeklyBudget, weekStart);
     setRota(r);
   };
 
