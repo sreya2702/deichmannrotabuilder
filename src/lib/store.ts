@@ -34,6 +34,8 @@ const SEED_EMPLOYEES: Employee[] = [
   { id: "e22", name: "Janah",    role: "Part time",  contractedHours: 16, hourlyRate: 11.35, availability: [false, true,  true,  false, true,  true,  true ] },
   { id: "e23", name: "Sneha",    role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  true,  true,  false, false], excludedFromBudget: true },
   { id: "e24", name: "TJ",       role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  true,  true,  false, false], excludedFromBudget: true },
+  { id: "e25", name: "Ashish",   role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [true,  false, true,  true,  false, true,  true ] },
+  { id: "e26", name: "Akash",    role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [false, true,  true,  false, true,  true,  true ] },
 ];
 
 interface BudgetCfg {
