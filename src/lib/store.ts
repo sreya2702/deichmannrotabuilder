@@ -127,7 +127,7 @@ let _budget: BudgetCfg | null = null;
 let _rota: Rota | null = null;
 
 function ensure() {
-  if (_employees === null) _employees = load("rota.employees.v2", SEED_EMPLOYEES);
+  if (_employees === null) _employees = load("rota.employees.v3", SEED_EMPLOYEES);
   if (_budget === null) _budget = load("rota.budget", DEFAULT_BUDGET);
   if (_rota === null) _rota = load<Rota | null>("rota.current.v2", null);
 }
@@ -138,7 +138,7 @@ export function getEmployees(): Employee[] {
 }
 export function setEmployees(next: Employee[]) {
   _employees = next;
-  save("rota.employees.v2", next);
+  save("rota.employees.v3", next);
   emit();
 }
 export function getBudget(): BudgetCfg {
