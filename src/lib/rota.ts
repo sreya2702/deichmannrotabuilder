@@ -402,6 +402,7 @@ export function suggestRebalance(
   rota.rows.forEach((r, ri) => {
     const emp = empMap.get(r.employeeId)!;
     if (emp.role === "Manager" || emp.role === "Supervisor") return;
+    if (emp.excludedFromBudget) return;
     r.days.forEach((d, di) => {
       if (!d.shift || !d.section) return;
       if (targetDay !== -1 && di !== targetDay) return;
