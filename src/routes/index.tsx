@@ -371,18 +371,36 @@ function RotaPage() {
                   : "bg-destructive/5 border-destructive/30",
               )}
             >
-              <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground mb-3 flex items-center gap-2">
-                <Sparkles className="size-3.5" /> Auto-Rebalance
-              </h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
+                  <Sparkles className="size-3.5" /> Auto-Rebalance
+                </h2>
+                <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoRebalance}
+                    onChange={(e) => setAutoRebalance(e.target.checked)}
+                    className="accent-primary"
+                  />
+                  Auto
+                </label>
+              </div>
               <div className="flex items-start gap-2">
                 {rebalance.status === "ok" ? (
                   <CheckCircle2 className="size-4 text-success mt-0.5 shrink-0" />
                 ) : (
                   <AlertTriangle className="size-4 text-destructive mt-0.5 shrink-0" />
                 )}
-                <p className="text-xs leading-relaxed">{rebalance.message}</p>
+                <p className="text-xs leading-relaxed">
+                  {rebalance.message}
+                  {autoRebalance && rebalance.status === "over" && rebalance.trim && (
+                    <span className="block mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Auto-trimming…
+                    </span>
+                  )}
+                </p>
               </div>
-              {rebalance.trim && (
+              {rebalance.trim && !autoRebalance && (
                 <Button
                   size="sm"
                   variant="outline"
