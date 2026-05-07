@@ -3,30 +3,37 @@ import { format, parseISO } from "date-fns";
 import type { Employee, Rota } from "./types";
 
 // Real Deichmann team — availability Mon..Sun from uploaded sheet.
-// Hourly rates: 2025 UK National Minimum/Living Wage defaults by role.
-// Contracted hours: Manager/Supervisor 40, Full time 30, Part time 16 (editable).
+// Hourly rates (manager-confirmed):
+//  - Supervisors: £14.21
+//  - Full time / Part time (24+): £13.21
+//  - Under-24 part timers (Yusuf, Janah): £11.35
+//  - Managers: excluded from labour budget
+//  - Sneha, TJ, Nelima: also excluded from labour budget
 const SEED_EMPLOYEES: Employee[] = [
-  { id: "e1",  name: "Cad",      role: "Manager",    contractedHours: 40, hourlyRate: 15.00, availability: [true,  true,  true,  false, true,  true,  false] },
-  { id: "e2",  name: "Sintija",  role: "Manager",    contractedHours: 40, hourlyRate: 15.00, availability: [false, false, true,  true,  true,  true,  false] },
-  { id: "e3",  name: "Cyprian",  role: "Supervisor", contractedHours: 40, hourlyRate: 13.00, availability: [true,  true,  false, true,  true,  false, true ] },
-  { id: "e4",  name: "Mary",     role: "Supervisor", contractedHours: 40, hourlyRate: 13.00, availability: [true,  true,  false, true,  false, true,  false] },
-  { id: "e5",  name: "Nelima",   role: "Supervisor", contractedHours: 40, hourlyRate: 13.00, availability: [true,  true,  false, true,  true,  true,  false] },
-  { id: "e6",  name: "Aaron",    role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [false, false, false, true,  true,  false, false] },
-  { id: "e7",  name: "Patrick",  role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [false, false, true,  true,  false, true,  false] },
-  { id: "e8",  name: "Cara",     role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [true,  true,  false, false, true,  false, false] },
-  { id: "e9",  name: "Gisela",   role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [true,  false, true,  false, false, true,  false] },
-  { id: "e10", name: "Saeed",    role: "Full time",  contractedHours: 30, hourlyRate: 12.21, availability: [false, false, true,  true,  true,  true,  true ] },
-  { id: "e11", name: "Tanzila",  role: "Full time",  contractedHours: 30, hourlyRate: 12.21, availability: [true,  true,  true,  false, true,  true,  false] },
-  { id: "e12", name: "Krisha",   role: "Full time",  contractedHours: 30, hourlyRate: 12.21, availability: [true,  true,  true,  true,  false, false, true ] },
-  { id: "e13", name: "Roshni",   role: "Full time",  contractedHours: 30, hourlyRate: 12.21, availability: [false, false, false, true,  true,  false, false] },
-  { id: "e14", name: "Faiza",    role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [false, true,  false, false, false, true,  true ] },
-  { id: "e15", name: "Anwar",    role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [true,  true,  false, false, false, false, true ] },
-  { id: "e16", name: "Gilda",    role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [false, false, false, true,  true,  true,  true ] },
-  { id: "e17", name: "Iga",      role: "Full time",  contractedHours: 30, hourlyRate: 12.21, availability: [true,  true,  false, true,  false, true,  true ] },
-  { id: "e18", name: "Sreya",    role: "Full time",  contractedHours: 30, hourlyRate: 12.21, availability: [true,  false, true,  false, true,  true,  true ] },
-  { id: "e19", name: "Somya",    role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [false, true,  true,  false, true,  true,  true ] },
-  { id: "e20", name: "Eventas",  role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [true,  false, false, true,  false, false, false] },
-  { id: "e21", name: "Yusuf",    role: "Part time",  contractedHours: 16, hourlyRate: 12.21, availability: [false, false, true,  false, true,  true,  false] },
+  { id: "e1",  name: "Cad",      role: "Manager",    contractedHours: 40, hourlyRate: 15.00, availability: [true,  true,  true,  false, true,  true,  false], excludedFromBudget: true },
+  { id: "e2",  name: "Sintija",  role: "Manager",    contractedHours: 40, hourlyRate: 15.00, availability: [false, false, true,  true,  true,  true,  false], excludedFromBudget: true },
+  { id: "e3",  name: "Cyprian",  role: "Supervisor", contractedHours: 40, hourlyRate: 14.21, availability: [true,  true,  false, true,  true,  false, true ] },
+  { id: "e4",  name: "Mary",     role: "Supervisor", contractedHours: 40, hourlyRate: 14.21, availability: [true,  true,  false, true,  false, true,  false] },
+  { id: "e5",  name: "Nelima",   role: "Supervisor", contractedHours: 40, hourlyRate: 14.21, availability: [true,  true,  false, true,  true,  true,  false], excludedFromBudget: true },
+  { id: "e6",  name: "Aaron",    role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [false, false, false, true,  true,  false, false] },
+  { id: "e7",  name: "Patrick",  role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [false, false, true,  true,  false, true,  false] },
+  { id: "e8",  name: "Cara",     role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [true,  true,  false, false, true,  false, false] },
+  { id: "e9",  name: "Gisela",   role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [true,  false, true,  false, false, true,  false] },
+  { id: "e10", name: "Saeed",    role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [false, false, true,  true,  true,  true,  true ] },
+  { id: "e11", name: "Tanzila",  role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  false, true,  true,  false] },
+  { id: "e12", name: "Krisha",   role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  true,  false, false, true ] },
+  { id: "e13", name: "Roshni",   role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [false, false, false, true,  true,  false, false] },
+  { id: "e14", name: "Faiza",    role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [false, true,  false, false, false, true,  true ] },
+  { id: "e15", name: "Anwar",    role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [true,  true,  false, false, false, false, true ] },
+  { id: "e16", name: "Gilda",    role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [false, false, false, true,  true,  true,  true ] },
+  { id: "e17", name: "Iga",      role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  false, true,  false, true,  true ] },
+  { id: "e18", name: "Sreya",    role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  false, true,  false, true,  true,  true ] },
+  { id: "e19", name: "Somya",    role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [false, true,  true,  false, true,  true,  true ] },
+  { id: "e20", name: "Eventas",  role: "Part time",  contractedHours: 16, hourlyRate: 13.21, availability: [true,  false, false, true,  false, false, false] },
+  { id: "e21", name: "Yusuf",    role: "Part time",  contractedHours: 16, hourlyRate: 11.35, availability: [false, false, true,  false, true,  true,  false] },
+  { id: "e22", name: "Janah",    role: "Part time",  contractedHours: 16, hourlyRate: 11.35, availability: [false, true,  true,  false, true,  true,  true ] },
+  { id: "e23", name: "Sneha",    role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  true,  true,  false, false], excludedFromBudget: true },
+  { id: "e24", name: "TJ",       role: "Full time",  contractedHours: 30, hourlyRate: 13.21, availability: [true,  true,  true,  true,  true,  false, false], excludedFromBudget: true },
 ];
 
 interface BudgetCfg {
