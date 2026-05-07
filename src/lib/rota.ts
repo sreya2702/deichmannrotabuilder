@@ -34,7 +34,9 @@ export function hoursBetween(start: string, end: string): number {
   return Math.max(0, Math.round((mins / 60) * 4) / 4); // round to 0.25h
 }
 
-/** Recalculate totals + dailyCost on a Rota in place-style (returns new). */
+/** Recalculate totals + dailyCost on a Rota in place-style (returns new).
+ *  dailyCost reflects ONLY employees counted against the labour budget
+ *  (excludedFromBudget employees are tracked for display but excluded here). */
 export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
   const dailyCost = Array(7).fill(0);
   const rows = rota.rows.map((r) => {
@@ -43,7 +45,9 @@ export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
     r.days.forEach((d, i) => {
       if (d.shift) {
         total += d.shift.hours;
-        dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        if (!emp.excludedFromBudget) {
+          dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        }
       }
     });
     return { ...r, totalHours: total, cost: total * emp.hourlyRate };
