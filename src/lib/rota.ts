@@ -34,7 +34,9 @@ export function hoursBetween(start: string, end: string): number {
   return Math.max(0, Math.round((mins / 60) * 4) / 4); // round to 0.25h
 }
 
-/** Recalculate totals + dailyCost on a Rota in place-style (returns new). */
+/** Recalculate totals + dailyCost on a Rota in place-style (returns new).
+ *  dailyCost reflects ONLY employees counted against the labour budget
+ *  (excludedFromBudget employees are tracked for display but excluded here). */
 export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
   const dailyCost = Array(7).fill(0);
   const rows = rota.rows.map((r) => {
@@ -43,7 +45,9 @@ export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
     r.days.forEach((d, i) => {
       if (d.shift) {
         total += d.shift.hours;
-        dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        if (!emp.excludedFromBudget) {
+          dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        }
       }
     });
     return { ...r, totalHours: total, cost: total * emp.hourlyRate };
@@ -127,8 +131,9 @@ function trimToBudget(
   const empMap = new Map(employees.map((e) => [e.id, e]));
   const cost = () =>
     rows.reduce((s, r) => {
-      const rate = empMap.get(r.employeeId)!.hourlyRate;
-      return s + r.days.reduce((a, d) => a + (d.shift?.hours ?? 0) * rate, 0);
+      const emp = empMap.get(r.employeeId)!;
+      if (emp.excludedFromBudget) return s;
+      return s + r.days.reduce((a, d) => a + (d.shift?.hours ?? 0) * emp.hourlyRate, 0);
     }, 0);
 
   let trimmed = 0;
@@ -140,6 +145,7 @@ function trimToBudget(
     rows.forEach((r, ri) => {
       const emp = empMap.get(r.employeeId)!;
       if (emp.role === "Manager" || emp.role === "Supervisor") return;
+      if (emp.excludedFromBudget) return;
       r.days.forEach((d, di) => {
         if (!d.shift || !d.section) return;
         // Don't strip a section that this employee is the only one covering on that day
@@ -244,7 +250,9 @@ export function generateRota(
     r.days.forEach((d, i) => {
       if (d.shift) {
         total += d.shift.hours;
-        dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        if (!emp.excludedFromBudget) {
+          dailyCost[i] += d.shift.hours * emp.hourlyRate;
+        }
       }
     });
     r.totalHours = total;
@@ -374,7 +382,11 @@ export function suggestRebalance(
   weeklyBudget: number,
 ): RebalanceSuggestion {
   const empMap = new Map(employees.map((e) => [e.id, e]));
-  const totalCost = rota.rows.reduce((s, r) => s + r.cost, 0);
+  const totalCost = rota.rows.reduce((s, r) => {
+    const emp = empMap.get(r.employeeId);
+    if (!emp || emp.excludedFromBudget) return s;
+    return s + r.cost;
+  }, 0);
   const overWeekly = totalCost > weeklyBudget;
   const overDayIdx = rota.dailyCost.findIndex((c, i) => c > dailyBudget[i] && dailyBudget[i] > 0);
 
@@ -390,6 +402,7 @@ export function suggestRebalance(
   rota.rows.forEach((r, ri) => {
     const emp = empMap.get(r.employeeId)!;
     if (emp.role === "Manager" || emp.role === "Supervisor") return;
+    if (emp.excludedFromBudget) return;
     r.days.forEach((d, di) => {
       if (!d.shift || !d.section) return;
       if (targetDay !== -1 && di !== targetDay) return;
