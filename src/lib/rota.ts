@@ -382,7 +382,11 @@ export function suggestRebalance(
   weeklyBudget: number,
 ): RebalanceSuggestion {
   const empMap = new Map(employees.map((e) => [e.id, e]));
-  const totalCost = rota.rows.reduce((s, r) => s + r.cost, 0);
+  const totalCost = rota.rows.reduce((s, r) => {
+    const emp = empMap.get(r.employeeId);
+    if (!emp || emp.excludedFromBudget) return s;
+    return s + r.cost;
+  }, 0);
   const overWeekly = totalCost > weeklyBudget;
   const overDayIdx = rota.dailyCost.findIndex((c, i) => c > dailyBudget[i] && dailyBudget[i] > 0);
 
