@@ -145,7 +145,7 @@ function trimToBudget(
     rows.forEach((r, ri) => {
       const emp = empMap.get(r.employeeId)!;
       if (emp.role === "Manager" || emp.role === "Supervisor") return;
-      r.days.forEach((d, di) => {
+      if (emp.excludedFromBudget) return;
         if (!d.shift || !d.section) return;
         // Don't strip a section that this employee is the only one covering on that day
         const sameSection = rows.filter(
