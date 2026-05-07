@@ -1,4 +1,7 @@
+import { addDays, format } from "date-fns";
 import type { Employee, Rota, RotaRow, Section, Shift } from "./types";
+import { isBankHoliday, isNearBankHoliday } from "./holidays";
+import { preferenceScore, preferredSections } from "./preferences";
 
 // Shift templates derived from the real Deichmann rota example
 export const SHIFT_PRESETS: Record<string, Shift> = {
@@ -26,17 +29,13 @@ export const PRESET_LABELS: Record<string, string> = {
   sunClose: "Sun Close (12:00–19:00)",
 };
 
-/** Compute hours between two HH:mm strings (handles same-day only). */
 export function hoursBetween(start: string, end: string): number {
   const [sh, sm] = start.split(":").map(Number);
   const [eh, em] = end.split(":").map(Number);
   const mins = eh * 60 + em - (sh * 60 + sm);
-  return Math.max(0, Math.round((mins / 60) * 4) / 4); // round to 0.25h
+  return Math.max(0, Math.round((mins / 60) * 4) / 4);
 }
 
-/** Recalculate totals + dailyCost on a Rota in place-style (returns new).
- *  dailyCost reflects ONLY employees counted against the labour budget
- *  (excludedFromBudget employees are tracked for display but excluded here). */
 export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
   const dailyCost = Array(7).fill(0);
   const rows = rota.rows.map((r) => {
@@ -45,9 +44,7 @@ export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
     r.days.forEach((d, i) => {
       if (d.shift) {
         total += d.shift.hours;
-        if (!emp.excludedFromBudget) {
-          dailyCost[i] += d.shift.hours * emp.hourlyRate;
-        }
+        if (!emp.excludedFromBudget) dailyCost[i] += d.shift.hours * emp.hourlyRate;
       }
     });
     return { ...r, totalHours: total, cost: total * emp.hourlyRate };
@@ -55,14 +52,10 @@ export function recomputeTotals(rota: Rota, employees: Employee[]): Rota {
   return { ...rota, rows, dailyCost };
 }
 
-
 export function fmtShift(s: Shift): string {
-  const a = s.start.replace(":", "");
-  const b = s.end.replace(":", "");
-  return `${a}-${b}`;
+  return `${s.start.replace(":", "")}-${s.end.replace(":", "")}`;
 }
 
-// Per-role weekly hour targets
 function targetHours(role: Employee["role"]): { min: number; max: number } {
   switch (role) {
     case "Manager":    return { min: 40, max: 40 };
@@ -72,62 +65,91 @@ function targetHours(role: Employee["role"]): { min: number; max: number } {
   }
 }
 
-// Required sections per day. Sunday: no Manager. Rush adds extra Tills (morning).
-function requiredSections(dayIdx: number, isRush: boolean): Section[] {
-  const isSun = dayIdx === 6;
-  const base: Section[] = isSun
-    ? ["Supervisor", "Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills"]
-    : ["Manager", "Supervisor", "Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills"];
-  if (isRush) base.push("Tills"); // extra till in rush
-  return base;
+// ===== Demand scoring (sales-led + UK calendar) =====
+
+export type DemandLevel = "quiet" | "normal" | "rush";
+
+export interface DayDemand {
+  level: DemandLevel;
+  score: number;          // 0..1
+  isBankHoliday: boolean;
+  bankHolidayName: string | null;
+  nearBankHoliday: boolean;
+  isWeekend: boolean;
+  salesBudget: number;
 }
 
-// Pick a shift based on section + day + employee role
+/**
+ * Compute per-day demand using the 2025 sales-budget pattern + UK calendar.
+ * - sales percentile within the week → base score
+ * - +0.25 if Sat/Sun (peak weekend trading)
+ * - +0.30 if bank holiday or in ±3 days window
+ * - level: rush ≥ 0.65, quiet ≤ 0.35, else normal
+ */
+export function computeDemand(
+  weekStart: Date,
+  dailyBudget: number[],
+): DayDemand[] {
+  const valid = dailyBudget.filter((v) => v > 0);
+  const max = valid.length ? Math.max(...valid) : 1;
+
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(weekStart, i);
+    const iso = format(date, "yyyy-MM-dd");
+    const sales = dailyBudget[i] || 0;
+    const isWknd = i >= 5;
+    const bh = isBankHoliday(iso);
+    const nearBh = isNearBankHoliday(date);
+
+    let score = max > 0 ? sales / max : 0;        // 0..1 from sales
+    if (isWknd) score += 0.25;
+    if (bh) score += 0.30;
+    else if (nearBh) score += 0.15;
+    score = Math.min(1, score);
+
+    const level: DemandLevel = score >= 0.65 ? "rush" : score <= 0.35 ? "quiet" : "normal";
+    return {
+      level, score,
+      isBankHoliday: !!bh,
+      bankHolidayName: bh,
+      nearBankHoliday: nearBh,
+      isWeekend: isWknd,
+      salesBudget: sales,
+    };
+  });
+}
+
+// Required coverage per day, scaled by demand.
+function requiredSlots(dayIdx: number, demand: DemandLevel): Section[] {
+  const isSun = dayIdx === 6;
+  const slots: Section[] = [];
+  if (!isSun) slots.push("Manager");
+  slots.push("Supervisor");
+  slots.push("Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills");
+  if (demand === "rush") {
+    // Rush: extra till + extra ladies 2/3 + extra mens
+    slots.push("Tills", "Ladies 2/3", "Mens");
+  } else if (demand === "normal") {
+    slots.push("Tills"); // one extra till
+  }
+  // quiet: stay lean
+  return slots;
+}
+
 function shiftFor(section: Section, dayIdx: number, role: Employee["role"], slotIdx: number): Shift {
   const isSun = dayIdx === 6;
   if (isSun) return slotIdx % 2 === 0 ? SHIFTS.sunOpen : SHIFTS.sunClose;
-
   if (section === "Manager") return slotIdx % 2 === 0 ? SHIFTS.open : SHIFTS.midClose;
-  if (section === "Supervisor") {
-    // Supervisor handles close, can also do early
-    return slotIdx % 2 === 0 ? SHIFTS.early : SHIFTS.midClose;
-  }
-  if (section === "Tills") {
-    // Tills extra in rush = morning
-    return slotIdx === 0 ? SHIFTS.midOpen : SHIFTS.open;
-  }
-  // Floor sections
+  if (section === "Supervisor") return slotIdx % 2 === 0 ? SHIFTS.early : SHIFTS.midClose;
+  if (section === "Tills") return slotIdx === 0 ? SHIFTS.midOpen : SHIFTS.open;
   if (role === "Part time") return slotIdx % 2 === 0 ? SHIFTS.short : SHIFTS.close;
   if (slotIdx % 3 === 0) return SHIFTS.midOpen;
   if (slotIdx % 3 === 1) return SHIFTS.mid;
   return SHIFTS.midClose;
 }
 
-// Determine rush days from this week's daily budgets. A day is rush if its
-// budget is >= average + 15%, OR it's a weekend (Sat=5, Sun=6).
-function detectRush(dailyBudget: number[]): boolean[] {
-  const valid = dailyBudget.filter((v) => v > 0);
-  const avg = valid.length ? valid.reduce((s, n) => s + n, 0) / valid.length : 0;
-  const threshold = avg * 1.15;
-  return dailyBudget.map((v, i) => i >= 5 || v >= threshold);
-}
-
-interface AssignState {
-  hoursAssigned: Record<string, number>;
-}
-
-/**
- * Trim hours from the rota to fit within the weekly budget.
- * Strategy: while over budget, find the most expensive *non-essential* shift
- * (Part time first, then Full time, never Manager/Supervisor in their core
- * single-coverage slots) and remove it. Stops when within budget or no
- * further trims possible without breaking coverage.
- */
-function trimToBudget(
-  rows: RotaRow[],
-  employees: Employee[],
-  weeklyBudget: number,
-): { rows: RotaRow[]; trimmed: number } {
+// ===== Trim to budget =====
+function trimToBudget(rows: RotaRow[], employees: Employee[], weeklyBudget: number) {
   const empMap = new Map(employees.map((e) => [e.id, e]));
   const cost = () =>
     rows.reduce((s, r) => {
@@ -136,10 +158,8 @@ function trimToBudget(
       return s + r.days.reduce((a, d) => a + (d.shift?.hours ?? 0) * emp.hourlyRate, 0);
     }, 0);
 
-  let trimmed = 0;
   let guard = 200;
   while (cost() > weeklyBudget && guard-- > 0) {
-    // Build candidate list of removable shifts (PT > FT, never Mgr/Sup, never single-coverage of a section)
     type Cand = { rowIdx: number; dayIdx: number; rate: number; hours: number; role: Employee["role"] };
     const cands: Cand[] = [];
     rows.forEach((r, ri) => {
@@ -148,33 +168,32 @@ function trimToBudget(
       if (emp.excludedFromBudget) return;
       r.days.forEach((d, di) => {
         if (!d.shift || !d.section) return;
-        // Don't strip a section that this employee is the only one covering on that day
-        const sameSection = rows.filter(
-          (rr) => rr.days[di].section === d.section && rr.days[di].shift,
-        ).length;
+        const sameSection = rows.filter((rr) => rr.days[di].section === d.section && rr.days[di].shift).length;
         if (sameSection <= 1) return;
         cands.push({ rowIdx: ri, dayIdx: di, rate: emp.hourlyRate, hours: d.shift.hours, role: emp.role });
       });
     });
-    if (cands.length === 0) break;
-    // Prefer Part time, then highest cost-per-shift
+    if (!cands.length) break;
     cands.sort((a, b) => {
       if (a.role !== b.role) return a.role === "Part time" ? -1 : 1;
       return b.rate * b.hours - a.rate * a.hours;
     });
     const c = cands[0];
     rows[c.rowIdx].days[c.dayIdx] = { shift: null, section: null };
-    trimmed++;
   }
-  return { rows, trimmed };
 }
 
+// ===== Generation =====
 export function generateRota(
   weekStartISO: string,
   employees: Employee[],
   dailyBudget: number[],
   weeklyBudget?: number,
+  weekStart?: Date,
 ): Rota {
+  const wkStart = weekStart ?? new Date(weekStartISO);
+  const demand = computeDemand(wkStart, dailyBudget);
+
   const rows: RotaRow[] = employees.map((e) => ({
     employeeId: e.id,
     days: Array.from({ length: 7 }, () => ({ shift: null, section: null })),
@@ -182,67 +201,76 @@ export function generateRota(
     cost: 0,
   }));
   const rowIdx = new Map(employees.map((e, i) => [e.id, i]));
-  const state: AssignState = { hoursAssigned: {} };
-  employees.forEach((e) => (state.hoursAssigned[e.id] = 0));
-
-  const rush = detectRush(dailyBudget);
+  const hoursAssigned: Record<string, number> = {};
+  const sectionCount: Record<string, Record<Section, number>> = {};
+  employees.forEach((e) => {
+    hoursAssigned[e.id] = 0;
+    sectionCount[e.id] = {} as Record<Section, number>;
+  });
 
   const assign = (empId: string, dayIdx: number, shift: Shift, section: Section) => {
     const i = rowIdx.get(empId)!;
     rows[i].days[dayIdx] = { shift, section };
-    state.hoursAssigned[empId] += shift.hours;
+    hoursAssigned[empId] += shift.hours;
+    sectionCount[empId][section] = (sectionCount[empId][section] ?? 0) + 1;
   };
 
-  // Eligibility: matches role pool for a section
   const poolFor = (section: Section): Employee["role"][] => {
     if (section === "Manager") return ["Manager"];
     if (section === "Supervisor") return ["Supervisor"];
     if (section === "Tills") return ["Part time", "Full time"];
-    return ["Full time", "Part time"]; // floor sections
+    return ["Full time", "Part time"];
   };
 
   for (let d = 0; d < 7; d++) {
-    const sections = requiredSections(d, rush[d]);
+    const slots = requiredSlots(d, demand[d].level);
     let slotIdx = 0;
 
-    for (const section of sections) {
+    for (const section of slots) {
       const allowedRoles = poolFor(section);
       const candidates = employees
         .filter((e) => allowedRoles.includes(e.role))
         .filter((e) => e.availability[d])
-        .filter((e) => rows[rowIdx.get(e.id)!].days[d].shift === null) // not yet assigned today
-        .sort((a, b) => {
-          // 1) under their max → preferred
-          const maxA = targetHours(a.role).max;
-          const maxB = targetHours(b.role).max;
-          const remA = maxA - state.hoursAssigned[a.id];
-          const remB = maxB - state.hoursAssigned[b.id];
-          const aUnder = remA > 0;
-          const bUnder = remB > 0;
-          if (aUnder !== bUnder) return aUnder ? -1 : 1;
-          // 2) those further from their MIN target first (fairness)
-          const minA = targetHours(a.role).min;
-          const minB = targetHours(b.role).min;
-          const gapA = minA - state.hoursAssigned[a.id];
-          const gapB = minB - state.hoursAssigned[b.id];
-          if (gapA !== gapB) return gapB - gapA;
-          // 3) cheapest
-          return a.hourlyRate - b.hourlyRate;
-        });
+        .filter((e) => rows[rowIdx.get(e.id)!].days[d].shift === null)
+        .map((e) => {
+          const max = targetHours(e.role).max;
+          const min = targetHours(e.role).min;
+          const remTo = max - hoursAssigned[e.id];
+          const gap = min - hoursAssigned[e.id];
+          const pref = preferenceScore(e.name, section);          // 0..1
+          const repeats = sectionCount[e.id][section] ?? 0;       // discourage overload
+          const isPrefSection = preferredSections(e.name).length > 0;
+
+          // Demand-aware experience boost: rush days favour FT/Supervisors with prefs
+          const expBoost =
+            demand[d].level === "rush"
+              ? (e.role === "Full time" || e.role === "Supervisor" ? 0.4 : 0)
+              : 0;
+
+          // Composite score (higher = better pick)
+          const score =
+            pref * 1.5 +
+            expBoost +
+            (gap > 0 ? gap * 0.05 : 0) +        // fairness toward minimums
+            (remTo > 0 ? 0.4 : -0.6) +          // strong penalty if at cap
+            (isPrefSection ? 0 : -0.2) -        // mild penalty for cross-section
+            repeats * 0.35 -                    // don't overload one section
+            e.hourlyRate * 0.02;                // slight cost preference
+          return { e, score };
+        })
+        .sort((a, b) => b.score - a.score)
+        .map((x) => x.e);
 
       const pick = candidates[0];
-      if (!pick) continue; // leave gap → coverage check will flag it
+      if (!pick) continue;
       assign(pick.id, d, shiftFor(section, d, pick.role, slotIdx), section);
       slotIdx++;
     }
   }
 
-  // Budget-aware trim: if a weekly budget cap was supplied, drop the most
-  // expensive non-essential PT/FT shifts until we fit under it.
-  const budgetCap = weeklyBudget ?? dailyBudget.reduce((s, n) => s + n, 0) * 0.12; // default 12% labour cost
+  const budgetCap = weeklyBudget ?? 4862;
   if (budgetCap > 0) trimToBudget(rows, employees, budgetCap);
 
-  // Totals
   const dailyCost = Array(7).fill(0);
   rows.forEach((r) => {
     const emp = employees.find((e) => e.id === r.employeeId)!;
@@ -250,9 +278,7 @@ export function generateRota(
     r.days.forEach((d, i) => {
       if (d.shift) {
         total += d.shift.hours;
-        if (!emp.excludedFromBudget) {
-          dailyCost[i] += d.shift.hours * emp.hourlyRate;
-        }
+        if (!emp.excludedFromBudget) dailyCost[i] += d.shift.hours * emp.hourlyRate;
       }
     });
     r.totalHours = total;
@@ -262,48 +288,38 @@ export function generateRota(
   return { weekStartISO, rows, dailyCost };
 }
 
+// ===== Coverage check (demand-aware) =====
 export function checkCoverage(
   rota: Rota,
   employees: Employee[],
   dailyBudget: number[],
+  weekStart?: Date,
 ) {
   const issues: { day: number; message: string }[] = [];
-  const empMap = new Map(employees.map((e) => [e.id, e]));
-  const rush = detectRush(dailyBudget);
+  const wkStart = weekStart ?? new Date(rota.weekStartISO);
+  const demand = computeDemand(wkStart, dailyBudget);
 
   for (let d = 0; d < 7; d++) {
-    const required = requiredSections(d, rush[d]);
-    // Count per section
+    const required = requiredSlots(d, demand[d].level);
     const filled: Record<string, number> = {};
     rota.rows.forEach((r) => {
       const a = r.days[d];
-      if (a.shift && a.section) {
-        filled[a.section] = (filled[a.section] ?? 0) + 1;
-      }
+      if (a.shift && a.section) filled[a.section] = (filled[a.section] ?? 0) + 1;
     });
     const need: Record<string, number> = {};
     required.forEach((s) => (need[s] = (need[s] ?? 0) + 1));
     Object.entries(need).forEach(([sec, n]) => {
       const have = filled[sec] ?? 0;
-      if (have < n) {
-        issues.push({ day: d, message: `${sec}: ${have}/${n}` });
-      }
+      if (have < n) issues.push({ day: d, message: `${sec}: ${have}/${n}${demand[d].level === "rush" ? " (rush)" : ""}` });
     });
-
-    // Hour band warnings (weekly, only flagged once on Sun)
     if (d === 6) {
       employees.forEach((e) => {
         const total = rota.rows.find((r) => r.employeeId === e.id)?.totalHours ?? 0;
         const t = targetHours(e.role);
-        if (total < t.min && total > 0) {
-          issues.push({ day: 6, message: `${e.name} under target (${total}/${t.min}h)` });
-        }
-        if (total > t.max) {
-          issues.push({ day: 6, message: `${e.name} over cap (${total}/${t.max}h)` });
-        }
+        if (total < t.min && total > 0) issues.push({ day: 6, message: `${e.name} under target (${total}/${t.min}h)` });
+        if (total > t.max) issues.push({ day: 6, message: `${e.name} over cap (${total}/${t.max}h)` });
       });
     }
-    void empMap;
   }
   return issues;
 }
@@ -323,7 +339,6 @@ export function suggestReplacement(
   const shift = row.days[dayIdx].shift!;
   const section = row.days[dayIdx].section ?? null;
 
-  // Simulate removal
   const simulated: Rota = {
     ...rota,
     rows: rota.rows.map((r) =>
@@ -336,28 +351,27 @@ export function suggestReplacement(
   const issues = checkCoverage(simulated, employees, dailyBudget).filter((x) => x.day === dayIdx);
 
   if (issues.length === 0) {
-    return {
-      needed: false,
-      replacements: [] as Employee[],
-      costDelta: -shift.hours * original.hourlyRate,
-    };
+    return { needed: false, replacements: [] as Employee[], costDelta: -shift.hours * original.hourlyRate };
   }
 
-  // Eligible replacements: same section pool, available, not already on shift this day
   const allowedRoles =
     section === "Manager" ? ["Manager"]
     : section === "Supervisor" ? ["Supervisor"]
     : ["Full time", "Part time"];
 
   const candidates = employees
-    .filter(
-      (e) =>
-        e.id !== employeeId &&
-        allowedRoles.includes(e.role) &&
-        e.availability[dayIdx] &&
-        !rota.rows.find((r) => r.employeeId === e.id)?.days[dayIdx].shift,
+    .filter((e) =>
+      e.id !== employeeId &&
+      allowedRoles.includes(e.role) &&
+      e.availability[dayIdx] &&
+      !rota.rows.find((r) => r.employeeId === e.id)?.days[dayIdx].shift,
     )
-    .sort((a, b) => a.hourlyRate - b.hourlyRate);
+    .sort((a, b) => {
+      const pa = section ? preferenceScore(a.name, section) : 0;
+      const pb = section ? preferenceScore(b.name, section) : 0;
+      if (pa !== pb) return pb - pa;
+      return a.hourlyRate - b.hourlyRate;
+    });
 
   const costDelta = candidates.length
     ? (candidates[0].hourlyRate - original.hourlyRate) * shift.hours
@@ -365,10 +379,6 @@ export function suggestReplacement(
   return { needed: true, replacements: candidates, costDelta };
 }
 
-/**
- * After a manual edit, look at where the rota stands vs daily/weekly budget
- * and suggest a single concrete trim if over budget.
- */
 export interface RebalanceSuggestion {
   status: "ok" | "warning" | "over";
   message: string;
@@ -395,7 +405,6 @@ export function suggestRebalance(
     return { status: "ok", message: `Within budget (${pct.toFixed(1)}% of weekly).` };
   }
 
-  // Find best candidate to trim — PT first, highest cost shift on the offending day if any.
   const targetDay = overDayIdx;
   type Cand = { rowIdx: number; dayIdx: number; saving: number; emp: Employee; section: Section | null };
   const cands: Cand[] = [];
@@ -406,17 +415,9 @@ export function suggestRebalance(
     r.days.forEach((d, di) => {
       if (!d.shift || !d.section) return;
       if (targetDay !== -1 && di !== targetDay) return;
-      const sameSection = rota.rows.filter(
-        (rr) => rr.days[di].section === d.section && rr.days[di].shift,
-      ).length;
+      const sameSection = rota.rows.filter((rr) => rr.days[di].section === d.section && rr.days[di].shift).length;
       if (sameSection <= 1) return;
-      cands.push({
-        rowIdx: ri,
-        dayIdx: di,
-        saving: d.shift.hours * emp.hourlyRate,
-        emp,
-        section: d.section,
-      });
+      cands.push({ rowIdx: ri, dayIdx: di, saving: d.shift.hours * emp.hourlyRate, emp, section: d.section });
     });
   });
   cands.sort((a, b) => {
