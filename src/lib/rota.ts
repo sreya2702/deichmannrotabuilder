@@ -131,8 +131,9 @@ function trimToBudget(
   const empMap = new Map(employees.map((e) => [e.id, e]));
   const cost = () =>
     rows.reduce((s, r) => {
-      const rate = empMap.get(r.employeeId)!.hourlyRate;
-      return s + r.days.reduce((a, d) => a + (d.shift?.hours ?? 0) * rate, 0);
+      const emp = empMap.get(r.employeeId)!;
+      if (emp.excludedFromBudget) return s;
+      return s + r.days.reduce((a, d) => a + (d.shift?.hours ?? 0) * emp.hourlyRate, 0);
     }, 0);
 
   let trimmed = 0;
