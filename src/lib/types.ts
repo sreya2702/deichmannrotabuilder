@@ -22,6 +22,9 @@ export interface Employee {
   hourlyRate: number;
   // availability per day index 0..6 (Mon..Sun)
   availability: boolean[];
+  // If true, this employee's labour cost is excluded from the weekly/daily
+  // budget tracker (e.g. Managers and named off-budget headcount).
+  excludedFromBudget?: boolean;
 }
 
 export interface Shift {
