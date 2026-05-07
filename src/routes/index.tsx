@@ -88,7 +88,11 @@ function RotaPage() {
     setRota(r);
   };
 
-  const totalCost = rota?.rows.reduce((s, r) => s + r.cost, 0) ?? 0;
+  const totalCost = rota?.rows.reduce((s, r) => {
+    const emp = employees.find((e) => e.id === r.employeeId);
+    if (!emp || emp.excludedFromBudget) return s;
+    return s + r.cost;
+  }, 0) ?? 0;
   const totalHours = rota?.rows.reduce((s, r) => s + r.totalHours, 0) ?? 0;
   const remaining = weeklyBudget - totalCost;
   const overBudget = totalCost > weeklyBudget;
@@ -104,10 +108,22 @@ function RotaPage() {
     [rota, employees, dailyBudget, weeklyBudget],
   );
 
+  const [autoRebalance, setAutoRebalance] = useState(true);
+
   const applyTrim = () => {
     if (!rota || !rebalance?.trim) return;
     writeShift(rebalance.trim.employeeId, rebalance.trim.dayIdx, null, null);
   };
+
+  // Auto-apply rebalance trims after manual edits push us over budget.
+  // Loops one trim per render-cycle until back within budget (or no safe trim).
+  useEffect(() => {
+    if (!autoRebalance) return;
+    if (!rota || !rebalance?.trim) return;
+    if (rebalance.status !== "over") return;
+    writeShift(rebalance.trim.employeeId, rebalance.trim.dayIdx, null, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRebalance, rebalance?.status, rebalance?.trim?.employeeId, rebalance?.trim?.dayIdx]);
 
   const swap = useMemo(() => {
     if (!rota || !swapEmp || swapDay === "") return null;
