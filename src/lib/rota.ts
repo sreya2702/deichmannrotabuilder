@@ -1,7 +1,14 @@
 import { addDays, format } from "date-fns";
 import type { Employee, Rota, RotaRow, Section, Shift } from "./types";
 import { isBankHoliday, isNearBankHoliday } from "./holidays";
-import { preferenceScore, preferredSections, isLastResort } from "./preferences";
+import {
+  preferenceScore,
+  preferredSections,
+  isLastResort,
+  deliveryRank,
+  isDeliveryTeam,
+  fixedShiftFor,
+} from "./preferences";
 
 // Shift templates derived from the real Deichmann rota example
 export const SHIFT_PRESETS: Record<string, Shift> = {
