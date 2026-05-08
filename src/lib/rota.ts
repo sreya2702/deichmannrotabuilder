@@ -1,7 +1,7 @@
 import { addDays, format } from "date-fns";
 import type { Employee, Rota, RotaRow, Section, Shift } from "./types";
 import { isBankHoliday, isNearBankHoliday } from "./holidays";
-import { preferenceScore, preferredSections } from "./preferences";
+import { preferenceScore, preferredSections, isLastResort } from "./preferences";
 
 // Shift templates derived from the real Deichmann rota example
 export const SHIFT_PRESETS: Record<string, Shift> = {
@@ -248,9 +248,11 @@ export function generateRota(
               : 0;
 
           // Composite score (higher = better pick)
+          const lastResort = isLastResort(e.name, section) ? -1.2 : 0;
           const score =
             pref * 1.5 +
             expBoost +
+            lastResort +
             (gap > 0 ? gap * 0.05 : 0) +        // fairness toward minimums
             (remTo > 0 ? 0.4 : -0.6) +          // strong penalty if at cap
             (isPrefSection ? 0 : -0.2) -        // mild penalty for cross-section
