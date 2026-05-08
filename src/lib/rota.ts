@@ -249,12 +249,14 @@ export function generateRota(
     const slots = requiredSlots(d, demand[d].level);
     let slotIdx = 0;
 
-    for (const section of slots) {
+    for (const slot of slots) {
+      const { section, kind } = slot;
       const allowedRoles = poolFor(section);
       const candidates = employees
         .filter((e) => allowedRoles.includes(e.role))
         .filter((e) => e.availability[d])
         .filter((e) => rows[rowIdx.get(e.id)!].days[d].shift === null)
+        .filter((e) => kind !== "delivery" || isDeliveryTeam(e.name))
         .map((e) => {
           const max = targetHours(e.role).max;
           const min = targetHours(e.role).min;
@@ -270,11 +272,18 @@ export function generateRota(
               ? (e.role === "Full time" || e.role === "Supervisor" ? 0.4 : 0)
               : 0;
 
+          // Delivery slot: rank-based bonus (Cyprian top, Cad last).
+          const delBoost =
+            kind === "delivery"
+              ? Math.max(0, 1.5 - deliveryRank(e.name) * 0.2)
+              : 0;
+
           // Composite score (higher = better pick)
           const lastResort = isLastResort(e.name, section) ? -1.2 : 0;
           const score =
             pref * 1.5 +
             expBoost +
+            delBoost +
             lastResort +
             (gap > 0 ? gap * 0.05 : 0) +        // fairness toward minimums
             (remTo > 0 ? 0.4 : -0.6) +          // strong penalty if at cap
@@ -288,7 +297,12 @@ export function generateRota(
 
       const pick = candidates[0];
       if (!pick) continue;
-      assign(pick.id, d, shiftFor(section, d, pick.role, slotIdx), section);
+      // Fixed contracted timings (Patrick / Cara) override the template.
+      const fixed = fixedShiftFor(pick.name, d);
+      const shift = fixed
+        ? { start: fixed.start, end: fixed.end, hours: fixed.hours }
+        : shiftFor(section, d, pick.role, slotIdx, kind);
+      assign(pick.id, d, shift, section);
       slotIdx++;
     }
   }
