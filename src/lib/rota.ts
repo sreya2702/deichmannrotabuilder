@@ -126,25 +126,41 @@ export function computeDemand(
   });
 }
 
-// Required coverage per day, scaled by demand.
-function requiredSlots(dayIdx: number, demand: DemandLevel): Section[] {
+// Slot kinds let us flag the first Ladies 1 slot of weekdays as the
+// delivery/early slot (06:15 start, before the 09:30 floor open).
+type SlotKind = "delivery" | "normal";
+interface Slot { section: Section; kind: SlotKind }
+
+// Required coverage per day, scaled by demand. Order matters — earliest
+// slot per section is filled first (so delivery stays at the front).
+function requiredSlots(dayIdx: number, demand: DemandLevel): Slot[] {
   const isSun = dayIdx === 6;
-  const slots: Section[] = [];
-  if (!isSun) slots.push("Manager");
-  slots.push("Supervisor");
-  slots.push("Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills");
+  const slots: Slot[] = [];
+  // Delivery / early stock fill (Mon–Sat, before opening).
+  if (!isSun) slots.push({ section: "Ladies 1", kind: "delivery" });
+  if (!isSun) slots.push({ section: "Manager", kind: "normal" });
+  slots.push({ section: "Supervisor", kind: "normal" });
+  (["Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills"] as Section[])
+    .forEach((s) => slots.push({ section: s, kind: "normal" }));
   if (demand === "rush") {
-    // Rush: extra till + extra ladies 2/3 + extra mens
-    slots.push("Tills", "Ladies 2/3", "Mens");
+    (["Tills", "Ladies 2/3", "Mens"] as Section[])
+      .forEach((s) => slots.push({ section: s, kind: "normal" }));
   } else if (demand === "normal") {
-    slots.push("Tills"); // one extra till
+    slots.push({ section: "Tills", kind: "normal" });
   }
-  // quiet: stay lean
   return slots;
 }
 
-function shiftFor(section: Section, dayIdx: number, role: Employee["role"], slotIdx: number): Shift {
+function shiftFor(
+  section: Section,
+  dayIdx: number,
+  role: Employee["role"],
+  slotIdx: number,
+  kind: SlotKind,
+): Shift {
   const isSun = dayIdx === 6;
+  // Delivery slot → 06:15 early start, regardless of role.
+  if (kind === "delivery") return SHIFTS.early;
   if (isSun) return slotIdx % 2 === 0 ? SHIFTS.sunOpen : SHIFTS.sunClose;
   if (section === "Manager") return slotIdx % 2 === 0 ? SHIFTS.open : SHIFTS.midClose;
   if (section === "Supervisor") return slotIdx % 2 === 0 ? SHIFTS.early : SHIFTS.midClose;
