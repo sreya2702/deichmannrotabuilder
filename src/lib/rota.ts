@@ -1,7 +1,14 @@
 import { addDays, format } from "date-fns";
 import type { Employee, Rota, RotaRow, Section, Shift } from "./types";
 import { isBankHoliday, isNearBankHoliday } from "./holidays";
-import { preferenceScore, preferredSections, isLastResort } from "./preferences";
+import {
+  preferenceScore,
+  preferredSections,
+  isLastResort,
+  deliveryRank,
+  isDeliveryTeam,
+  fixedShiftFor,
+} from "./preferences";
 
 // Shift templates derived from the real Deichmann rota example
 export const SHIFT_PRESETS: Record<string, Shift> = {
@@ -119,25 +126,41 @@ export function computeDemand(
   });
 }
 
-// Required coverage per day, scaled by demand.
-function requiredSlots(dayIdx: number, demand: DemandLevel): Section[] {
+// Slot kinds let us flag the first Ladies 1 slot of weekdays as the
+// delivery/early slot (06:15 start, before the 09:30 floor open).
+type SlotKind = "delivery" | "normal";
+interface Slot { section: Section; kind: SlotKind }
+
+// Required coverage per day, scaled by demand. Order matters — earliest
+// slot per section is filled first (so delivery stays at the front).
+function requiredSlots(dayIdx: number, demand: DemandLevel): Slot[] {
   const isSun = dayIdx === 6;
-  const slots: Section[] = [];
-  if (!isSun) slots.push("Manager");
-  slots.push("Supervisor");
-  slots.push("Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills");
+  const slots: Slot[] = [];
+  // Delivery / early stock fill (Mon–Sat, before opening).
+  if (!isSun) slots.push({ section: "Ladies 1", kind: "delivery" });
+  if (!isSun) slots.push({ section: "Manager", kind: "normal" });
+  slots.push({ section: "Supervisor", kind: "normal" });
+  (["Ladies 1", "Ladies 2/3", "Mens", "Kids", "Tills"] as Section[])
+    .forEach((s) => slots.push({ section: s, kind: "normal" }));
   if (demand === "rush") {
-    // Rush: extra till + extra ladies 2/3 + extra mens
-    slots.push("Tills", "Ladies 2/3", "Mens");
+    (["Tills", "Ladies 2/3", "Mens"] as Section[])
+      .forEach((s) => slots.push({ section: s, kind: "normal" }));
   } else if (demand === "normal") {
-    slots.push("Tills"); // one extra till
+    slots.push({ section: "Tills", kind: "normal" });
   }
-  // quiet: stay lean
   return slots;
 }
 
-function shiftFor(section: Section, dayIdx: number, role: Employee["role"], slotIdx: number): Shift {
+function shiftFor(
+  section: Section,
+  dayIdx: number,
+  role: Employee["role"],
+  slotIdx: number,
+  kind: SlotKind,
+): Shift {
   const isSun = dayIdx === 6;
+  // Delivery slot → 06:15 early start, regardless of role.
+  if (kind === "delivery") return SHIFTS.early;
   if (isSun) return slotIdx % 2 === 0 ? SHIFTS.sunOpen : SHIFTS.sunClose;
   if (section === "Manager") return slotIdx % 2 === 0 ? SHIFTS.open : SHIFTS.midClose;
   if (section === "Supervisor") return slotIdx % 2 === 0 ? SHIFTS.early : SHIFTS.midClose;
@@ -226,12 +249,14 @@ export function generateRota(
     const slots = requiredSlots(d, demand[d].level);
     let slotIdx = 0;
 
-    for (const section of slots) {
+    for (const slot of slots) {
+      const { section, kind } = slot;
       const allowedRoles = poolFor(section);
       const candidates = employees
         .filter((e) => allowedRoles.includes(e.role))
         .filter((e) => e.availability[d])
         .filter((e) => rows[rowIdx.get(e.id)!].days[d].shift === null)
+        .filter((e) => kind !== "delivery" || isDeliveryTeam(e.name))
         .map((e) => {
           const max = targetHours(e.role).max;
           const min = targetHours(e.role).min;
@@ -247,11 +272,18 @@ export function generateRota(
               ? (e.role === "Full time" || e.role === "Supervisor" ? 0.4 : 0)
               : 0;
 
+          // Delivery slot: rank-based bonus (Cyprian top, Cad last).
+          const delBoost =
+            kind === "delivery"
+              ? Math.max(0, 1.5 - deliveryRank(e.name) * 0.2)
+              : 0;
+
           // Composite score (higher = better pick)
           const lastResort = isLastResort(e.name, section) ? -1.2 : 0;
           const score =
             pref * 1.5 +
             expBoost +
+            delBoost +
             lastResort +
             (gap > 0 ? gap * 0.05 : 0) +        // fairness toward minimums
             (remTo > 0 ? 0.4 : -0.6) +          // strong penalty if at cap
@@ -265,7 +297,12 @@ export function generateRota(
 
       const pick = candidates[0];
       if (!pick) continue;
-      assign(pick.id, d, shiftFor(section, d, pick.role, slotIdx), section);
+      // Fixed contracted timings (Patrick / Cara) override the template.
+      const fixed = fixedShiftFor(pick.name, d);
+      const shift = fixed
+        ? { start: fixed.start, end: fixed.end, hours: fixed.hours }
+        : shiftFor(section, d, pick.role, slotIdx, kind);
+      assign(pick.id, d, shift, section);
       slotIdx++;
     }
   }
@@ -309,7 +346,7 @@ export function checkCoverage(
       if (a.shift && a.section) filled[a.section] = (filled[a.section] ?? 0) + 1;
     });
     const need: Record<string, number> = {};
-    required.forEach((s) => (need[s] = (need[s] ?? 0) + 1));
+    required.forEach((s) => (need[s.section] = (need[s.section] ?? 0) + 1));
     Object.entries(need).forEach(([sec, n]) => {
       const have = filled[sec] ?? 0;
       if (have < n) issues.push({ day: d, message: `${sec}: ${have}/${n}${demand[d].level === "rush" ? " (rush)" : ""}` });
