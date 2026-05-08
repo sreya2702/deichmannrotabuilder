@@ -346,7 +346,7 @@ export function checkCoverage(
       if (a.shift && a.section) filled[a.section] = (filled[a.section] ?? 0) + 1;
     });
     const need: Record<string, number> = {};
-    required.forEach((s) => (need[s] = (need[s] ?? 0) + 1));
+    required.forEach((s) => (need[s.section] = (need[s.section] ?? 0) + 1));
     Object.entries(need).forEach(([sec, n]) => {
       const have = filled[sec] ?? 0;
       if (have < n) issues.push({ day: d, message: `${sec}: ${have}/${n}${demand[d].level === "rush" ? " (rush)" : ""}` });
